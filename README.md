@@ -1,4 +1,5 @@
-LegoSLM Reproduction
+#LegoSLM Reproduction
+
 This repository contains code for reproducing the LegoSLM project. It is organized into two main components:
 
 📌 1. SLAM-LLM-ASR-Whisper
