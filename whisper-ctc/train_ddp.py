@@ -18,6 +18,29 @@ def setup(rank, world_size, backend="hccl"):
 def cleanup():
     dist.destroy_process_group()
 
+@torch.no_grad()
+def evaluate(model, dataloader, device, ctc_loss_fn, rank):
+    model.eval()
+    total_loss = 0
+    total_batches = 0
+    for batch in dataloader:
+        input_features = batch["input_features"].to(device, non_blocking=True)
+        labels = batch["labels"].to(device, non_blocking=True)
+        input_lengths = batch["input_lengths"].to(device, non_blocking=True)
+        label_lengths = batch["label_lengths"].to(device, non_blocking=True)
+
+        logits = model(input_features)
+        log_probs = logits.log_softmax(2).transpose(0, 1)
+
+        loss = ctc_loss_fn(log_probs, labels, input_lengths, label_lengths)
+        total_loss += loss.item()
+        total_batches += 1
+    model.train()
+    avg_loss = total_loss / max(1, total_batches)
+    if rank == 0:
+        print(f"Validation Loss: {avg_loss:.4f}")
+    return avg_loss
+
 def train(rank, world_size, args):
     setup(rank, world_size)
 
@@ -43,6 +66,19 @@ def train(rank, world_size, args):
         num_workers=4,
         pin_memory=False
     )
+    if args.valid_jsonl:
+        valid_dataset = JsonlCTCDataset(args.valid_jsonl, tokenizer, feature_extractor)
+        valid_sampler = DistributedSampler(valid_dataset, shuffle=False)
+        valid_dataloader = DataLoader(
+            valid_dataset,
+            batch_size=args.batch_size,
+            sampler=valid_sampler,
+            collate_fn=ctc_collate_fn,
+            num_workers=4,
+            pin_memory=False
+        )
+    else:
+        valid_dataloader = None
 
     model = WhisperCTC(args.whisper_path, vocab_size=tokenizer.vocab_size)
     model.to(device)
@@ -100,15 +136,19 @@ def train(rank, world_size, args):
             if rank == 0:
                 pbar.set_postfix(loss=loss.item())
 
+        # 评估+保存
+        if valid_dataloader is not None:
+            evaluate(model, valid_dataloader, device, ctc_loss_fn, rank)
+        if rank == 0:
+            save_name = f"{args.save_path.replace('.pt', f'_epoch{epoch}.pt')}"
+            torch.save(model.module.state_dict(), save_name)
+
         # 可选：清理缓存
         if torch_npu.is_available():
             torch_npu.empty_cache()
         elif torch.cuda.is_available():
             torch.cuda.empty_cache()
 
-    # 仅 rank0 保存
-    if rank == 0:
-        torch.save(model.module.state_dict(), args.save_path)
     cleanup()
 
 def main():
@@ -120,6 +160,7 @@ def main():
     parser.add_argument("--save_path", default="whisper_ctc.pt")
     parser.add_argument("--tokenizer_path", default="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
     parser.add_argument("--whisper_path", default="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/whisper-large-v3")
+    parser.add_argument("--valid_jsonl", required=True)
     args = parser.parse_args()
 
     world_size = int(os.environ.get("WORLD_SIZE", 1))
