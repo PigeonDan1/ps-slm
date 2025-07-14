@@ -1,0 +1,30 @@
+{
+    "train_micro_batch_size_per_gpu": 1,
+    "gradient_accumulation_steps": 1,
+    "optimizer": {
+        "type": "AdamW",
+        "params": {
+            "lr": 5e-5,
+            "betas": [0.9, 0.999],
+            "eps": 1e-06
+    }
+    },
+    "bf16": {
+        "enabled": true
+    },
+    "zero_optimization": {
+        "stage": 2,
+        "allgather_partitions": true,
+        "overlap_comm": true,
+        "reduce_scatter": true,
+        "contiguous_gradients": true
+    },
+    "scheduler": {
+        "type": "WarmupCosineLR",
+        "params": {
+        "warmup_num_steps": 100,
+        "total_num_steps": 15000
+    }},
+    "checkpoint_activations": false
+
+}
