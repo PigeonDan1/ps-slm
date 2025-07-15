@@ -277,7 +277,7 @@ def train(
                     f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)  if train_config.batching_strategy != 'dynamic' else ''} completed (loss: {loss.detach().float()}, acc: {acc})"
                 )
 
-                if (total_step + step + 1) % train_config.validation_interval == 0 and train_config.run_validation:
+                if (step + 1) % train_config.validation_interval == 0 and train_config.run_validation:
                     eval_ppl, eval_epoch_loss, *rest = evaluation(
                         model, train_config, eval_dataloader, local_rank, tokenizer
                     )

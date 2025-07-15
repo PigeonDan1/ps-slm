@@ -54,6 +54,7 @@ def train(rank, world_size, args):
 
     # Tokenizer / Feature Extractor 每个进程都加载（可优化为 rank0 加载后 broadcast）
     tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    blank_id = tokenizer.vocab_size
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.whisper_path)
 
     dataset = JsonlCTCDataset(args.jsonl, tokenizer, feature_extractor)
@@ -80,7 +81,7 @@ def train(rank, world_size, args):
     else:
         valid_dataloader = None
 
-    model = WhisperCTC(args.whisper_path, vocab_size=tokenizer.vocab_size)
+    model = WhisperCTC(args.whisper_path, vocab_size=tokenizer.vocab_size + 1)
     model.to(device)
     model = DDP(model, device_ids=[rank])
 
@@ -108,7 +109,7 @@ def train(rank, world_size, args):
         return 0.5 * (1 + torch.cos(torch.tensor(torch.pi * progress)))
 
     scheduler = LambdaLR(optimizer, lr_lambda)
-    ctc_loss_fn = torch.nn.CTCLoss(blank=0, zero_infinity=True)
+    ctc_loss_fn = torch.nn.CTCLoss(blank=blank_id, zero_infinity=True)
 
     model.train()
     for epoch in range(args.epochs):
@@ -142,12 +143,6 @@ def train(rank, world_size, args):
         if rank == 0:
             save_name = f"{args.save_path.replace('.pt', f'_epoch{epoch}.pt')}"
             torch.save(model.module.state_dict(), save_name)
-
-        # 可选：清理缓存
-        if torch_npu.is_available():
-            torch_npu.empty_cache()
-        elif torch.cuda.is_available():
-            torch.cuda.empty_cache()
 
     cleanup()
 
