@@ -23,6 +23,7 @@ class JsonlCTCDataset(Dataset):
         sample = self.samples[idx]
         path = sample["path"]
         text = sample["target"]
+        uid = sample["key"] 
 
         if path.endswith(".wav"):
             wav, sr = torchaudio.load(path)
@@ -43,6 +44,7 @@ class JsonlCTCDataset(Dataset):
             labels = self.tokenizer(text, add_special_tokens=False).input_ids
 
         return {
+            "uid": uid, 
             "input_features": torch.tensor(input_features, dtype=torch.float),
             "labels": torch.tensor(labels, dtype=torch.long),
         }
@@ -51,15 +53,25 @@ class JsonlCTCDataset(Dataset):
 def ctc_collate_fn(batch):
     input_features = [item["input_features"] for item in batch]
     labels = [item["labels"] for item in batch]
-
+    uids = [item["uid"] for item in batch]
+    # Pad input features
     input_features_padded = pad_sequence(input_features, batch_first=True)
-    labels_padded = pad_sequence(labels, batch_first=True, padding_value=-100)
-
     input_lengths = torch.tensor([len(x) for x in input_features])
+
+    # Create attention mask
+    batch_size, max_len, _ = input_features_padded.shape
+    attention_mask = torch.zeros(batch_size, max_len, dtype=torch.long)
+    for i, length in enumerate(input_lengths):
+        attention_mask[i, :length] = 1
+
+    # Pad labels
+    labels_padded = pad_sequence(labels, batch_first=True, padding_value=-100)
     label_lengths = torch.tensor([len(x) for x in labels])
 
     return {
+        "uid": uids,
         "input_features": input_features_padded,
+        "attention_mask": attention_mask,
         "input_lengths": input_lengths,
         "labels": labels_padded,
         "label_lengths": label_lengths,

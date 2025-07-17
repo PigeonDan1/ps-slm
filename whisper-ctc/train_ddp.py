@@ -25,11 +25,12 @@ def evaluate(model, dataloader, device, ctc_loss_fn, rank):
     total_batches = 0
     for batch in dataloader:
         input_features = batch["input_features"].to(device, non_blocking=True)
+        attention_mask = batch["attention_mask"].to(device, non_blocking=True)
         labels = batch["labels"].to(device, non_blocking=True)
         input_lengths = batch["input_lengths"].to(device, non_blocking=True)
         label_lengths = batch["label_lengths"].to(device, non_blocking=True)
+        logits = model(input_features, attention_mask=attention_mask)
 
-        logits = model(input_features)
         log_probs = logits.log_softmax(2).transpose(0, 1)
 
         loss = ctc_loss_fn(log_probs, labels, input_lengths, label_lengths)
@@ -81,7 +82,11 @@ def train(rank, world_size, args):
     else:
         valid_dataloader = None
 
-    model = WhisperCTC(args.whisper_path, vocab_size=tokenizer.vocab_size + 1)
+    model = WhisperCTC(
+        args.whisper_path,
+        vocab_size=tokenizer.vocab_size + 1,
+        freeze_encoder=False
+    )
     model.to(device)
     model = DDP(model, device_ids=[rank])
 
@@ -112,6 +117,7 @@ def train(rank, world_size, args):
     ctc_loss_fn = torch.nn.CTCLoss(blank=blank_id, zero_infinity=True)
 
     model.train()
+    global_step = 0
     for epoch in range(args.epochs):
         sampler.set_epoch(epoch)
         if rank == 0:
@@ -126,16 +132,28 @@ def train(rank, world_size, args):
             labels = batch["labels"].to(device, non_blocking=True)
             input_lengths = batch["input_lengths"].to(device, non_blocking=True)
             label_lengths = batch["label_lengths"].to(device, non_blocking=True)
+            attention_mask = batch["attention_mask"].to(device, non_blocking=True)
 
-            logits = model(input_features)
+            logits = model(input_features, attention_mask=attention_mask)
             log_probs = logits.log_softmax(2).transpose(0, 1)
 
             loss = ctc_loss_fn(log_probs, labels, input_lengths, label_lengths)
             loss.backward()
             optimizer.step()
-            scheduler.step()          # 别忘了更新学习率
+            scheduler.step()
+
+            global_step += 1
+
             if rank == 0:
                 pbar.set_postfix(loss=loss.item())
+
+                # 每 N steps 验证+保存
+                if global_step % args.eval_steps == 0:
+                    if valid_dataloader is not None:
+                        val_loss = evaluate(model, valid_dataloader, device, ctc_loss_fn, rank)
+                    ckpt_name = f"{args.save_path.replace('.pt', f'_step{global_step}.pt')}"
+                    torch.save(model.module.state_dict(), ckpt_name)
+
 
         # 评估+保存
         if valid_dataloader is not None:
@@ -156,6 +174,7 @@ def main():
     parser.add_argument("--tokenizer_path", default="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
     parser.add_argument("--whisper_path", default="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/whisper-large-v3")
     parser.add_argument("--valid_jsonl", required=True)
+    parser.add_argument("--eval_steps", type=int, default=2000, help="Run eval/save every N steps")
     args = parser.parse_args()
 
     world_size = int(os.environ.get("WORLD_SIZE", 1))
