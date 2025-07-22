@@ -5,8 +5,7 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from transformers import AutoTokenizer, WhisperFeatureExtractor
 from tqdm import tqdm
-
-from dataset import JsonlCTCDataset, ctc_collate_fn
+from dataset import JsonlCTCDataset, ctc_collate_fn, Vocabulary
 from model import WhisperCTC
 
 def setup(rank, world_size, backend="hccl"):
@@ -25,14 +24,12 @@ def evaluate(model, dataloader, device, ctc_loss_fn, rank):
     total_batches = 0
     for batch in dataloader:
         input_features = batch["input_features"].to(device, non_blocking=True)
-        attention_mask = batch["attention_mask"].to(device, non_blocking=True)
         labels = batch["labels"].to(device, non_blocking=True)
         input_lengths = batch["input_lengths"].to(device, non_blocking=True)
         label_lengths = batch["label_lengths"].to(device, non_blocking=True)
-        logits = model(input_features, attention_mask=attention_mask)
-
+        attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+        logits = model(input_features, attention_mask)
         log_probs = logits.log_softmax(2).transpose(0, 1)
-
         loss = ctc_loss_fn(log_probs, labels, input_lengths, label_lengths)
         total_loss += loss.item()
         total_batches += 1
@@ -44,7 +41,9 @@ def evaluate(model, dataloader, device, ctc_loss_fn, rank):
 
 def train(rank, world_size, args):
     setup(rank, world_size)
-
+    print("Here is the arguments: ")
+    print(args)
+    print("Check possible probelms !!!")
     # 决定当前进程绑定的设备
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank}")
@@ -54,11 +53,22 @@ def train(rank, world_size, args):
         torch_npu.npu.set_device(device)
 
     # Tokenizer / Feature Extractor 每个进程都加载（可优化为 rank0 加载后 broadcast）
-    tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
-    blank_id = tokenizer.vocab_size
+    # tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+    # blank_id = tokenizer.vocab_size
+    if args.vocab_file:
+        tokenizer = Vocabulary(args.vocab_file)
+        blank_id = len(tokenizer)  # 假设 blank 放在 vocab_size 的位置
+        use_custom_vocab = True
+        print(f"Load vocabulary file from:{args.vocab_file}")
+    else:
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
+        blank_id = tokenizer.vocab_size
+        use_custom_vocab = False
+        print(f"Load Tokenizer from: {args.tokenizer_path}")
+
     feature_extractor = WhisperFeatureExtractor.from_pretrained(args.whisper_path)
 
-    dataset = JsonlCTCDataset(args.jsonl, tokenizer, feature_extractor)
+    dataset = JsonlCTCDataset(args.jsonl, tokenizer, feature_extractor, mode = "train")
     sampler = DistributedSampler(dataset, shuffle=True)
     dataloader = DataLoader(
         dataset,
@@ -69,7 +79,7 @@ def train(rank, world_size, args):
         pin_memory=False
     )
     if args.valid_jsonl:
-        valid_dataset = JsonlCTCDataset(args.valid_jsonl, tokenizer, feature_extractor)
+        valid_dataset = JsonlCTCDataset(args.valid_jsonl, tokenizer, feature_extractor, mode="dev")
         valid_sampler = DistributedSampler(valid_dataset, shuffle=False)
         valid_dataloader = DataLoader(
             valid_dataset,
@@ -82,10 +92,11 @@ def train(rank, world_size, args):
     else:
         valid_dataloader = None
 
+    vocab_size = len(tokenizer) + 1 if use_custom_vocab else tokenizer.vocab_size + 1
     model = WhisperCTC(
         args.whisper_path,
-        vocab_size=tokenizer.vocab_size + 1,
-        freeze_encoder=False
+        vocab_size=vocab_size,
+        freeze_encoder=True
     )
     model.to(device)
     model = DDP(model, device_ids=[rank])
@@ -101,7 +112,7 @@ def train(rank, world_size, args):
 
     # 总步数估算：len(dataloader) * epochs
     total_steps = len(dataloader) * args.epochs
-    warmup_steps = min(1000, total_steps // 10)          # 10 % 或最多 1k
+    warmup_steps = min(2000, total_steps // 10)          # 10 % 或最多 1k
 
     # 构造 Lambda 调度器：先线性 warmup，再余弦退火
     from torch.optim.lr_scheduler import LambdaLR
@@ -128,15 +139,15 @@ def train(rank, world_size, args):
         for batch in pbar:
             optimizer.zero_grad()
 
-            input_features = batch["input_features"].to(device, non_blocking=True)
+            input_features = batch["input_features"].to(device, non_blocking=True) # (4, 80, 3000)
             labels = batch["labels"].to(device, non_blocking=True)
-            input_lengths = batch["input_lengths"].to(device, non_blocking=True)
+            input_lengths = batch["input_lengths"].to(device, non_blocking=True) # (len1, ..., len4)
             label_lengths = batch["label_lengths"].to(device, non_blocking=True)
             attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+            # print(attention_mask)
+            logits = model(input_features, attention_mask)
 
-            logits = model(input_features, attention_mask=attention_mask)
-            log_probs = logits.log_softmax(2).transpose(0, 1)
-
+            log_probs = logits.log_softmax(2).transpose(0, 1) # (1500, 4, 151644)
             loss = ctc_loss_fn(log_probs, labels, input_lengths, label_lengths)
             loss.backward()
             optimizer.step()
@@ -146,7 +157,6 @@ def train(rank, world_size, args):
 
             if rank == 0:
                 pbar.set_postfix(loss=loss.item())
-
                 # 每 N steps 验证+保存
                 if global_step % args.eval_steps == 0:
                     if valid_dataloader is not None:
@@ -172,9 +182,11 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--save_path", default="whisper_ctc.pt")
     parser.add_argument("--tokenizer_path", default="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
-    parser.add_argument("--whisper_path", default="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/whisper-large-v3")
+    parser.add_argument("--whisper_path", default="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/openai-mirror/whisper-medium")
     parser.add_argument("--valid_jsonl", required=True)
-    parser.add_argument("--eval_steps", type=int, default=2000, help="Run eval/save every N steps")
+    parser.add_argument("--eval_steps", type=int, default=1000, help="Run eval/save every N steps")
+    parser.add_argument("--vocab_file", default=None, help="Path to vocab.txt. If set, will override tokenizer.")
+
     args = parser.parse_args()
 
     world_size = int(os.environ.get("WORLD_SIZE", 1))

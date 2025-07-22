@@ -2,3 +2,8 @@ __pycache__
 kernel_meta
 ckpt
 checkpoint
+exp_aishell1_qwen
+exp_aishell1_self
+exp_librispeech_qwen
+exp_librispeech_qwen_frozen_qwen
+exp_librispeech_qwen_frozen

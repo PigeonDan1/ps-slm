@@ -5,14 +5,16 @@ import torch_npu
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, WhisperFeatureExtractor
 from model import WhisperCTC
-from dataset import JsonlCTCDataset, ctc_collate_fn
+from dataset import JsonlCTCDataset, ctc_collate_fn, Vocabulary
 from search import ctc_greedy_search, ctc_prefix_beam_search
 
-def decode_results(results, tokenizer):
+def decode_results(results, tokenizer, use_vocab=False):
     texts = []
     for r in results:
-        ids = r # 提取 token id 列表
-        text = tokenizer.decode(ids, skip_special_tokens=True)
+        if use_vocab:
+            text = tokenizer.sequence_to_text(r)
+        else:
+            text = tokenizer.decode(r, skip_special_tokens=True)
         texts.append(text)
     return texts
 
@@ -24,19 +26,28 @@ def main():
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--device", type=str, default='0')
     parser.add_argument("--mode", type=str, default="greedy")
+    parser.add_argument("--vocab_file", type=str, default=None)
     args = parser.parse_args()
     device = "cuda" if torch.cuda.is_available() else f"npu:{args.device}"
     mode = args.mode
     print("Loading Tokenizer and FeatureExtractor...")
-    tokenizer = AutoTokenizer.from_pretrained("/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
-    feature_extractor = WhisperFeatureExtractor.from_pretrained("/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/whisper-large-v3")
+    if args.vocab_file:
+        tokenizer = Vocabulary(args.vocab_file)
+        use_vocab = True
+        vocab_size = len(tokenizer)
+    else:
+        tokenizer = AutoTokenizer.from_pretrained("/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
+        use_vocab = False
+        vocab_size = tokenizer.vocab_size
+
+    feature_extractor = WhisperFeatureExtractor.from_pretrained("/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/openai-mirror/whisper-medium")
     print("Loading Model...")
-    model = WhisperCTC("/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/whisper-large-v3", vocab_size=tokenizer.vocab_size+1)
+    model = WhisperCTC("/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/openai-mirror/whisper-medium", vocab_size=vocab_size+1)
     model.load_state_dict(torch.load(args.checkpoint, map_location=device))
     model.to(device)
     model.eval()
     print("Preparing DataLoader...")
-    dataset = JsonlCTCDataset(args.jsonl, tokenizer, feature_extractor)
+    dataset = JsonlCTCDataset(args.jsonl, tokenizer, feature_extractor, mode = "test")
     dataloader = DataLoader(dataset, batch_size=args.batch_size, collate_fn=ctc_collate_fn)
 
     ckpt_dir = os.path.dirname(args.checkpoint)
@@ -47,7 +58,7 @@ def main():
     print(f"GT output will be saved to: {gt_output_path}")
 
     print("Starting Inference...")
-    blank_id = tokenizer.vocab_size  # same as CTC blank setting
+    blank_id = vocab_size  # same as CTC blank setting
 
     with open(pred_output_path, 'w', encoding='utf-8') as pred_fout, \
          open(gt_output_path, 'w', encoding='utf-8') as gt_fout:
@@ -65,12 +76,15 @@ def main():
                     cleaned_ids = ctc_greedy_search(log_probs, input_lens, blank_id=blank_id)
                 else:
                     cleaned_ids = ctc_prefix_beam_search(log_probs, input_lens, blank_id=blank_id, beam_size=10)
-                decoded_text = decode_results(cleaned_ids, tokenizer)
+                decoded_text = decode_results(cleaned_ids, tokenizer, use_vocab=use_vocab)
 
                 for i in range(len(decoded_text)):
                     gt_labels = labels[i]
                     gt_labels = gt_labels[gt_labels >= 0]
-                    gt_text = tokenizer.decode(gt_labels, skip_special_tokens=True)
+                    if use_vocab:
+                        gt_text = tokenizer.sequence_to_text(gt_labels.tolist())
+                    else:
+                        gt_text = tokenizer.decode(gt_labels, skip_special_tokens=True)
                     uid = uids[i]
                     print(f"[Sample {batch_idx}] uid={uid}")
                     print(f"  pred : {decoded_text[i]}")
