@@ -7,3 +7,4 @@ exp_aishell1_self
 exp_librispeech_qwen
 exp_librispeech_qwen_frozen_qwen
 exp_librispeech_qwen_frozen
+exp_librispeech_gemma_frozen

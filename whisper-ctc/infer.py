@@ -26,7 +26,9 @@ def main():
     parser.add_argument("--batch_size", type=int, default=1)
     parser.add_argument("--device", type=str, default='0')
     parser.add_argument("--mode", type=str, default="greedy")
+    parser.add_argument("--tokenizer_path", type=str, default="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
     parser.add_argument("--vocab_file", type=str, default=None)
+    
     args = parser.parse_args()
     device = "cuda" if torch.cuda.is_available() else f"npu:{args.device}"
     mode = args.mode
@@ -36,7 +38,7 @@ def main():
         use_vocab = True
         vocab_size = len(tokenizer)
     else:
-        tokenizer = AutoTokenizer.from_pretrained("/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
+        tokenizer = AutoTokenizer.from_pretrained(args.tokenizer_path)
         use_vocab = False
         vocab_size = tokenizer.vocab_size
 
