@@ -1,5 +1,5 @@
 #!/bin/bash
-run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/Legoslm/SLAM-LLM-ASR
+run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
 cd  $run_dir
 code_dir=.
 
@@ -7,7 +7,7 @@ projector=linear
 use_peft=true
 use_fp16=false
 eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/Legoslm/SLAM-LLM-ASR/exp/20250725-1127-librispeech-loratrue_asr_instruct/ps-slm_epoch_5_step_2000
+ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250725-1127-librispeech-loratrue_asr_instruct/ps-slm_epoch_5_step_2000
 dataset=librispeech
 task=asr
 test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/test-clean/

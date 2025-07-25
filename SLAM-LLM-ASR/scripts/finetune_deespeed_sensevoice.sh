@@ -9,7 +9,7 @@ export OMP_NUM_THREADS=1
 export TASK_QUEUE_ENABLE=2
 export ASCEND_LAUNCH_BLOCKING=0
 export CPU_AFFINITY_CONF=2  # 细粒度绑核
-run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/Legoslm/SLAM-LLM-ASR
+run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
 cd $run_dir
 code_dir=.
 dataset=librispeech
