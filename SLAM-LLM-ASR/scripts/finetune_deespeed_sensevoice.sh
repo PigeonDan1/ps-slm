@@ -25,7 +25,7 @@ projector=linear
 use_peft=true # For llm
 use_fp16=true
 freeze_encoder=true
-do_psd=true # whether use psd to ds
+do_psd=false # whether use psd to ds
 
 # use absolute path
 deepspeed_config=conf/ds_config.json
@@ -34,7 +34,7 @@ deepspeed_config=conf/ds_config.json
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
 encoder_dim=512
-encoder_projector_ds_rate=1 # downsampling rate
+encoder_projector_ds_rate=5 # downsampling rate
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
 llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct

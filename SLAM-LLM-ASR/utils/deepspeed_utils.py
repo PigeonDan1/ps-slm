@@ -338,7 +338,7 @@ def train(
                                 )
                             )
                         logger.info("=====================================")
-                        
+                    # run validation each epoch    
                     if train_config.run_validation:
                         eval_ppl, eval_epoch_loss, *rest = evaluation(
                             model, train_config, eval_dataloader, local_rank, tokenizer
