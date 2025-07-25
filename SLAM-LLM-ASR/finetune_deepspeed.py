@@ -127,7 +127,7 @@ def main(kwargs: DictConfig):
             wandb.init(dir=log_config.wandb_dir, entity=log_config.wandb_entity_name, project=log_config.wandb_project_name,name=log_config.wandb_exp_name ,config=wandb_config)
 
 
-    model_factory = get_custom_model_factory(model_config, logger)
+    model_factory = get_custom_model_factory(model_config, logger) # pj: we can implace our own method here for creating other recipes
     model, tokenizer = model_factory(train_config, model_config, **kwargs)
     parameters = filter(lambda p: p.requires_grad, model.parameters())
     device = torch.device("npu" if torch.npu.is_available() else "cpu")

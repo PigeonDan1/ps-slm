@@ -114,7 +114,7 @@ def main(kwargs: DictConfig):
 	
 	model_factory = get_custom_model_factory(model_config, logger)
 	model, tokenizer = model_factory(train_config, model_config, **kwargs)
-	device = torch.device("npu" if torch.npu.is_available() else "cpu") # FIX(MZY): put the whole model to device.
+	device = torch.device(f"npu:{train_config.device}" if torch.npu.is_available() else "cpu") # FIX(MZY): put the whole model to device.
 	model.to(device)
 	model.eval()
 

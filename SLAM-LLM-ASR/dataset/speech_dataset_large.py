@@ -32,7 +32,7 @@ class MultiTaskDataset(IterableDataset):
                     self.multitask_prompt_list[item["task"]].append(item["prompt"])
                 else:
                     self.multitask_prompt_list[item["task"]] = [item["prompt"]]
-        print(f"[Prompt] {self.multitask_prompt_list}")
+        # print(f"[Prompt] {self.multitask_prompt_list}")
         if split == "train":
             self.data_path = dataset_config.train_scp_file_path
         elif split == "val":
@@ -49,6 +49,11 @@ class MultiTaskDataset(IterableDataset):
         self.max_audio_length = dataset_config.get("max_audio_length", 30)
         self.inference_mode = dataset_config.get("inference_mode", False)
         self.sample_rate = 16000
+        self.encoder_path = dataset_config.encoder_path
+        from model.SenseVoice import SenseVoiceSmall
+        encoder, kwargs = SenseVoiceSmall.from_pretrained(self.encoder_path)
+        self.kwargs = kwargs
+        del encoder # without memory waste
 
     def __iter__(self):
         multitask_task_path = os.path.join(self.data_path,"multitask.jsonl")
@@ -72,12 +77,14 @@ class MultiTaskDataset(IterableDataset):
         with open(multitask_task_path) as f_task:
             for data_index,line in enumerate(f_task):
                 if (data_index % total_num_workers) == worker_rank:
-                    try:
-                        item = json.loads(line.strip())
-                        ark_path = item["path"]
-                        key = item["key"]
-                        target = item["target"]
-                        task = item["task"]
+                    # try:
+                    item = json.loads(line.strip())
+                    ark_path = item["path"]
+                    key = item["key"]
+                    target = item["target"]
+                    task = item["task"]
+                    # pj: Modify the dataset based on your own encoder
+                    if self.dataset_config.encoder == "whisper":
                         numpy_array = kaldiio.load_mat(ark_path)
                         audio_raw = numpy_array[1].astype(np.float32) / 32768
                         if len(audio_raw) / self.sample_rate > self.max_audio_length or len(audio_raw) / self.sample_rate < 0.1: 
@@ -86,46 +93,70 @@ class MultiTaskDataset(IterableDataset):
                         input_features = self.extract_fbank(audio_raw)
                         audio_raw = whisper.pad_or_trim(audio_raw)
                         input_features = whisper.log_mel_spectrogram(audio_raw, n_mels=128)
-                        # print(input_features.shape)
                         input_features = input_features.squeeze(0)
                         input_feature_length = input_features.shape[1]
-                        # input_feature_length = input_features.shape[0]
-                        # print(input_features.shape,input_feature_length)
-                        prompt = random.choice(self.multitask_prompt_list[task])
-                        prompt = self.prompt_template.format(prompt)
-                        
-                        if task in self.append_info_tasks:
-                            prompt = prompt.format(item[task])
+                    else:
+                        import torchaudio
+                        numpy_array = kaldiio.load_mat(ark_path)        # int16
+                        audio_raw = numpy_array[1].astype(np.float32) / 32768.0
+                        data_in = [audio_raw]      # List[np.ndarray]
+                        kwargs = self.kwargs
+                        frontend = kwargs.get("frontend", None)
+                        from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
+                        audio_list = load_audio_text_image_video(
+                            data_in,
+                            fs=frontend.fs,
+                            audio_fs=16000,
+                            data_type="sound",
+                        )
+                        input_features, input_feature_length = extract_fbank(
+                            audio_list,
+                            data_type="sound",
+                            frontend=frontend
+                        ) # [1, T, D=560]
+                        input_features, input_feature_length = input_features[0], input_feature_length[0]
+                        # print(f"input_feat: {input_features.shape}")
+                        # print(f"input_feat_len: {input_feature_length}")
+                        # input()
+                    
+                    prompt = random.choice(self.multitask_prompt_list[task])
+                    prompt = self.prompt_template.format(prompt)
+                    
+                    if task in self.append_info_tasks:
+                        prompt = prompt.format(item[task])
 
-                        prompt_ids = self.tokenizer.encode(prompt)
-                        # print(prompt)
-                        prompt_length = len(prompt_ids)
-                        prompt_ids = torch.tensor(prompt_ids)
+                    prompt_ids = self.tokenizer.encode(prompt)
+                    # print(prompt)
+                    prompt_length = len(prompt_ids)
+                    prompt_ids = torch.tensor(prompt_ids)
 
-                        if  not self.inference_mode:
-                            target_ids = self.tokenizer.encode(target)
-                            target_ids.append(self.tokenizer.eos_token_id)
-                            target_ids = torch.tensor(target_ids)
-                            input_ids = torch.cat([prompt_ids,target_ids])
-                        else:
-                            input_ids = prompt_ids
-                        attention_mask = input_ids.ge(-1)  
-                        result = {
-                                "input_ids": input_ids,
-                                "attention_mask": attention_mask ,
-                                "input_features": input_features ,
-                                "input_feature_length":input_feature_length,
-                                'key': key,
-                                'target': target,
-                        }
+                    if  not self.inference_mode:
+                        import re
+                        if re.fullmatch(r"[A-Za-z\s.,!?']+", target):
+                            target = target.lower()
+                        target_ids = self.tokenizer.encode(target)
+                        target_ids.append(self.tokenizer.eos_token_id)
+                        target_ids = torch.tensor(target_ids)
+                        input_ids = torch.cat([prompt_ids,target_ids])
+                    else:
+                        input_ids = prompt_ids
+                    attention_mask = input_ids.ge(-1)  
+                    result = {
+                            "input_ids": input_ids,
+                            "attention_mask": attention_mask ,
+                            "input_features": input_features ,
+                            "input_feature_length":input_feature_length,
+                            'key': key,
+                            'target': target,
+                    }
 
-                        if  not self.inference_mode:
-                            labels = copy.deepcopy(input_ids)
-                            labels[:prompt_length] = self.tokenizer.default_ignore_token
-                            result["labels"] = labels
-                        yield result
-                    except:
-                        print(data_index,item)
+                    if  not self.inference_mode:
+                        labels = copy.deepcopy(input_ids)
+                        labels[:prompt_length] = self.tokenizer.default_ignore_token
+                        result["labels"] = labels
+                    yield result
+                    # except:
+                    #     print(data_index,item)
             
     def pad(self, sequence, max_length, padding_idx=0,padding_style = "right"):
             if isinstance(sequence, (int, list, tuple)):
@@ -173,35 +204,69 @@ class MultiTaskDataset(IterableDataset):
             htk_compat=self.dataset_config["fbankConfig"]["htk_compat"]  # 是否与HTK兼容
         )
         return fbank_features
+    
+    # pj: Add sensevoice 
     def collator(self, samples):
         assert samples is not None
         if self.inference_mode:
             padding_style = "left"
         else:
             padding_style = "right"
-        padding_style = "left"
-        input_feature_length = torch.stack([torch.tensor(s["input_feature_length"]) for s in samples])
+
         input_ids_max_length = max([s['input_ids'].shape[0] for s in samples])
-        input_ids = torch.stack([self.pad(s['input_ids'], input_ids_max_length, self.tokenizer.pad_token_id,padding_style = padding_style)
-                                    for s in samples])
-        attention_mask = torch.stack([self.pad(s['attention_mask'], input_ids_max_length, False,padding_style = padding_style)
-                                        for s in samples])
-        input_features_max_length = max([s['input_features'].shape[0] for s in samples])
-        input_features = torch.stack([self.pad(s['input_features'], input_features_max_length, 0)
-                                for s in samples])
+        input_ids = torch.stack([
+            self.pad(s['input_ids'], input_ids_max_length,
+                    self.tokenizer.pad_token_id, padding_style=padding_style)
+            for s in samples
+        ])
+        attention_mask = torch.stack([
+            self.pad(s['attention_mask'], input_ids_max_length,
+                    False, padding_style=padding_style)
+            for s in samples
+        ])
+
+        if not self.inference_mode:
+            labels = torch.stack([
+                self.pad(s['labels'], input_ids_max_length,
+                        self.tokenizer.default_ignore_token, padding_style=padding_style)
+                for s in samples
+            ])
+
+        if self.dataset_config.encoder == "whisper":
+            # Whisper: [B, D, T]
+            input_feature_length = torch.stack([torch.tensor(s["input_feature_length"]) for s in samples])
+            max_feat_len = max([s['input_features'].shape[0] for s in samples])
+            input_features = torch.stack([
+                self.pad(s['input_features'], max_feat_len, 0, padding_style="right")
+                for s in samples
+            ])
+        else:  # SenseVoice: [T, 560] -> [B, T_max, 560]
+            input_feature_length = torch.tensor(
+                [s["input_feature_length"] for s in samples], dtype=torch.long
+            )  # [B]
+
+            max_len = max([s["input_features"].size(0) for s in samples])
+
+            input_features = torch.stack([
+                torch.nn.functional.pad(
+                    s["input_features"],
+                    (0, 0, 0, max_len - s["input_features"].size(0)),  # (left, right, top, bottom)
+                    value=0.0
+                )
+                for s in samples
+            ])  # [B, T_max, 80]
+
         result = {
-                "input_ids": input_ids,
-                "attention_mask": attention_mask ,
-                "input_features": input_features ,
-                "input_feature_length":input_feature_length,
+            "input_ids": input_ids,
+            "attention_mask": attention_mask,
+            "input_features": input_features,
+            "input_feature_length": input_feature_length,
         }
-       
         if self.inference_mode:
             result["keys"] = [s['key'] for s in samples]
             result["targets"] = [s['target'] for s in samples]
         else:
-            result["labels"] = torch.stack([self.pad(s['labels'], input_ids_max_length, self.tokenizer.default_ignore_token,padding_style = padding_style)
-                                for s in samples])
+            result["labels"] = labels
         return result
 
 class MultiTaskDynamicBatchDataset(IterableDataset):

@@ -25,7 +25,7 @@ class ConformerConfig:
 
 @dataclass
 class ModelConfig:
-    file: str = "model/aispeech_asr.py:model_factory"
+    file: str = "model/aispeech_asr.py:model_factory" # pj: you can also use your own model_factory here
     llm_name: str = "Qwen2.5-7B-Instruct"
     llm_path: str = "PATH/to/LLAMA/7B"
     llm_type: str = "decoder_only"
@@ -89,7 +89,7 @@ class TrainConfig:
     use_fp16:bool = False
     mixed_precision:bool = True
     val_batch_size:Optional[int] = None
-
+    do_psd:bool = False
     use_peft:bool = False
     peft_config:PeftConfig = field(default_factory=PeftConfig)
     output_dir:str = "PATH/to/save/PEFT/model"
@@ -109,11 +109,15 @@ class TrainConfig:
         "help": "whether to freeze llm when finetuning, should be true when use peft finetuning"
     })
     freeze_encoder:bool = False
+    device: Optional[int] = 0 
 
 
 @dataclass
 class DataConfig:
+    file: Optional[str] = "/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/Legoslm/SLAM-LLM-ASR/dataset/speech_dataset_large.py:get_speech_dataset"
     dataset: str = "multitask_dataset"
+    encoder: str = "whisper"
+    encoder_path: Optional[str] = None
     max_audio_length : int = 30
     train_max_frame_length: int = 1500
     ds_rate: int = 8

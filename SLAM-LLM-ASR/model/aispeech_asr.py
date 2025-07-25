@@ -45,10 +45,10 @@ def setup_tokenizer(train_config, model_config, **kwargs):
 
 def setup_encoder(train_config, model_config, **kwargs):
     encoder_name = model_config.encoder_name
+
     import whisper
     encoder = whisper.load_model(name=model_config.encoder_path, device='cpu').encoder
     encoder.extract_variable_length_features = types.MethodType(extract_variable_length_features, encoder)
-
     if train_config.freeze_encoder:
         for name, param in encoder.named_parameters(): 
             param.requires_grad = False
