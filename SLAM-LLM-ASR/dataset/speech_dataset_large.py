@@ -124,7 +124,7 @@ class MultiTaskDataset(IterableDataset):
                     
                     if task in self.append_info_tasks:
                         prompt = prompt.format(item[task])
-
+                    # print(f"Prompt is {prompt}")
                     prompt_ids = self.tokenizer.encode(prompt)
                     # print(prompt)
                     prompt_length = len(prompt_ids)

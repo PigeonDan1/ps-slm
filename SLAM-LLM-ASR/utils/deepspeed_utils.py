@@ -277,7 +277,7 @@ def train(
                     f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)  if train_config.batching_strategy != 'dynamic' else ''} completed (loss: {loss.detach().float()}, acc: {acc})"
                 )
 
-                if (step + 1) % train_config.validation_interval == 0 and train_config.run_validation:
+                if ( step + 1) % train_config.validation_interval == 0 and train_config.run_validation:
                     eval_ppl, eval_epoch_loss, *rest = evaluation(
                         model, train_config, eval_dataloader, local_rank, tokenizer
                     )
@@ -338,53 +338,6 @@ def train(
                                 )
                             )
                         logger.info("=====================================")
-                    # run validation each epoch    
-                    if train_config.run_validation:
-                        eval_ppl, eval_epoch_loss, *rest = evaluation(
-                            model, train_config, eval_dataloader, local_rank, tokenizer
-                        )
-                        eval_epoch_acc = rest[0] if rest else -1
-                        checkpoint_start_time = time.perf_counter()
-
-                        
-                        if train_config.save_model and (eval_epoch_loss < best_val_loss or eval_epoch_acc > best_val_acc):
-                            checkpoint_name = f"{train_config.model_name}_epoch_{str(epoch+1)}_step_{step+1}"
-                            save_model_checkpoint_deepspeed(
-                                model, train_config, checkpoint_name
-                            )
-
-                        checkpoint_end_time = time.perf_counter() - checkpoint_start_time
-                        checkpoint_times.append(checkpoint_end_time)
-                        if eval_epoch_loss < best_val_loss:
-                            best_val_loss = eval_epoch_loss
-                            if rank == 0:
-                                logger.info(
-                                    f"best eval loss on epoch {epoch+1} is {best_val_loss}"
-                                )
-                        val_loss.append(eval_epoch_loss)
-                        val_prep.append(eval_ppl)
-                        if rest:
-                            if eval_epoch_acc > best_val_acc:
-                                best_val_acc = eval_epoch_acc
-                                if rank == 0:
-                                    logger.info(
-                                        f"best eval acc on epoch {epoch+1} is {best_val_acc}"
-                                    )
-                            val_acc.append(rest[0])
-                        else:
-                            val_acc.append(-1)
-
-                        if log_config.use_wandb:
-                            if rank == 0:
-                                wandb.log(
-                                    {
-                                        "valid/val_epoch_loss": eval_epoch_loss,
-                                        "valid/val_perplexity": eval_ppl,
-                                        "valid/best_val_loss": best_val_loss,
-                                        "valid/val_accuracy": val_acc[-1],
-                                        "valid/val_best_accuracy": best_val_acc,
-                                    }
-                                )
                     dist.barrier()
             pbar.close()
         # prof.stop()

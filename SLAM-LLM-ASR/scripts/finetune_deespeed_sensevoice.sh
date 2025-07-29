@@ -7,7 +7,8 @@ export HCCL_CONNECT_TIMEOUT=7200
 export HYDRA_FULL_ERROR=1
 export OMP_NUM_THREADS=1
 export TASK_QUEUE_ENABLE=2
-export ASCEND_LAUNCH_BLOCKING=0
+# export ASCEND_LAUNCH_BLOCKING=0
+export ASCEND_LAUNCH_BLOCKING=1
 export CPU_AFFINITY_CONF=2  # 细粒度绑核
 run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
 cd $run_dir
@@ -16,31 +17,34 @@ dataset=librispeech
 task=asr
 train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
 dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
-train_max_frame_length=2000
+train_max_frame_length=1500
 eval_max_frame_length=3000
 multitask_prompt_path=conf/multiprompt.jsonl
 # prompt_style="\{\}\\<speech\\>" # "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n" | "USER: {}\n ASSISTANT:"
 projector=linear
 
-use_peft=true # For llm
+use_peft=false # For llm
 use_fp16=true
 freeze_encoder=true
-do_psd=false # whether use psd to ds
-
+do_psd=true # whether use psd to ds
+ctc_posterior=false # whether use ctc posterior
+voca_trans=true # whether use vocabulary transfer
 # use absolute path
 deepspeed_config=conf/ds_config.json
 
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
-encoder_dim=512
-encoder_projector_ds_rate=5 # downsampling rate
+encoder_dim=512 #25055 #512
+encoder_projector_ds_rate=1 # downsampling rate
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
 llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
-llm_dim=1536
+llm_dim=1536 #151936 # 1536
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
-output_dir=${code_dir}/exp/$(date +"%Y%m%d-%H%M")-$dataset-lora${use_peft}_${task}_instruct
+# prompt_style='<|im_start|>user\\n<speech>{}<|im_end|>\\n<|im_start|>assistant\\n' # audio first
+prompt_fig=audio_first
+output_dir=${code_dir}/exp/$(date +"%Y%m%d-%H%M")-$dataset-lora${use_peft}_${task}_instruct_do_psd_${do_psd}_ds_${encoder_projector_ds_rate}_ctc_posterior_${ctc_posterior}_voca_trans_${voca_trans}_${prompt_fig}
 
 hydra_args="
 hydra.run.dir=$output_dir \
@@ -63,6 +67,8 @@ hydra.run.dir=$output_dir \
 ++train_config.num_epochs=5 \
 ++train_config.freeze_encoder=$freeze_encoder \
 ++train_config.do_psd=$do_psd \
+++train_config.ctc_posterior=$ctc_posterior \
+++train_config.voca_trans=$voca_trans \
 ++train_config.freeze_llm=true \
 ++train_config.use_peft=$use_peft \
 ++train_config.batching_strategy=dynamic \

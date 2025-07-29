@@ -90,6 +90,8 @@ class TrainConfig:
     mixed_precision:bool = True
     val_batch_size:Optional[int] = None
     do_psd:bool = False
+    ctc_posterior:Optional[bool] = False
+    voca_trans:Optional[bool] = False
     use_peft:bool = False
     peft_config:PeftConfig = field(default_factory=PeftConfig)
     output_dir:str = "PATH/to/save/PEFT/model"
@@ -114,7 +116,7 @@ class TrainConfig:
 
 @dataclass
 class DataConfig:
-    file: Optional[str] = "/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/Legoslm/SLAM-LLM-ASR/dataset/speech_dataset_large.py:get_speech_dataset"
+    file: Optional[str] = "dataset/speech_dataset_large.py:get_speech_dataset"
     dataset: str = "multitask_dataset"
     encoder: str = "whisper"
     encoder_path: Optional[str] = None
@@ -123,7 +125,7 @@ class DataConfig:
     ds_rate: int = 8
     eval_max_frame_length: int = 2000
     multitask_prompt_path: str = "conf/multiprompt.jsonl"
-    prompt_style: str = "<|im_start|>user\n{}<speech><|im_end|>\n<|im_start|>assistant\n"
+    prompt_style: str = "<|im_start|>user\n<speech>{}<|im_end|>\n<|im_start|>assistant\n"
     append_info_tasks : List = field(default_factory=lambda: ["hotword"])
     # file: str = "dataset/speech_dataset_large.py:get_speech_dataset"
     train_scp_file_path: str = ""

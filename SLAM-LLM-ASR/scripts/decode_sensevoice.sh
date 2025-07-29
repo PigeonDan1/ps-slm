@@ -4,28 +4,33 @@ cd  $run_dir
 code_dir=.
 
 projector=linear
-use_peft=true
+use_peft=false
 use_fp16=false
 eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250725-1127-librispeech-loratrue_asr_instruct/ps-slm_epoch_5_step_2000
+ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250728-1800-librispeech-lorafalse_asr_instruct_do_psd_true_ds_1_ctc_posterior_false_voca_trans_false/ps-slm_epoch_5_step_1000
+prompt_style="<|im_start|>user\n<speech>{}<|im_end|>\n<|im_start|>assistant\n" # audio first
+
 dataset=librispeech
-task=asr
-test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/test-clean/
-
-
+task=st
+split=test-other
+# test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/
+test_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
-encoder_dim=512
-encoder_projector_ds_rate=5
+encoder_dim=512 #25055 #512
+encoder_projector_ds_rate=1
+do_psd=true # whether use psd to ds
+ctc_posterior=false # whether use ctc posterior
+voca_trans=true # whether use vocabulary transfer
 
 llm_name="Qwen2.5-1.5B-Instruct"
 llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
-llm_dim=1536
+llm_dim=1536 #151936 #1536
 
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
-run_decode_device=0 # run decode on certain device
-decode_log=$ckpt_path/decode_${dataset}_${task}
+run_decode_device=3 # run decode on certain device
+decode_log=$ckpt_path/decode_${dataset}_${task}_${split}
 python \
     $code_dir/inference_batch.py \
     hydra.run.dir=$ckpt_path \
@@ -47,6 +52,9 @@ python \
     ++train_config.use_peft=$use_peft \
     ++train_config.batching_strategy=dynamic \
     ++train_config.num_epochs=1 \
+    ++train_config.do_psd=$do_psd \
+    ++train_config.ctc_posterior=$ctc_posterior \
+    ++train_config.voca_trans=$voca_trans \
     ++train_config.num_workers_dataloader=0 \
     ++train_config.output_dir=$output_dir \
     ++decode_log=$decode_log \

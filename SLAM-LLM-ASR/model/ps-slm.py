@@ -183,9 +183,10 @@ class slam_model_asr(torch.nn.Module):
         # tokenizer
         self.tokenizer = tokenizer
         self.metric = kwargs.get("metric", "acc")
-
+        self.ctc_posterior = train_config.ctc_posterior
         self.train_config = train_config
         self.do_psd = train_config.do_psd
+        self.voca_trans = train_config.voca_trans
         self.model_config = model_config
         if train_config.get("enable_deepspeed", False):
             def new_forward(self, input):
@@ -299,9 +300,22 @@ class slam_model_asr(torch.nn.Module):
             encoder_outs = encoder_out   
             encoder_feature_length = encoder_out_lens
         # print(f"psd shape: {encoder_outs.shape}")
-
+        if self.ctc_posterior:
+            print("Use CTC Posterior ...")
+            encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+        
         projector_outs = self.encoder_projector(encoder_outs) 
         projector_feature_length = encoder_feature_length // self.encoder_projector.k
+
+        if self.ctc_posterior and self.voca_trans:
+            #    llm_embedding: nn.Embedding -> weight: [llm_vocab, hidden]
+            print("Vocabulary Transform is ready ...")
+            llm_embedding = self.llm.get_input_embeddings()
+            embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
+            #    projector_outs: [B, T', llm_vocab], embed_matrix  : [llm_vocab, hidden]
+            projector_outs = torch.einsum("btv,vh->bth", projector_outs, embed_matrix)
+            # print(projector_outs.shape)
+
         # print("\n","End",inputs_embeds, attention_mask, labels, position_ids,encoder_feature_length,projector_feature_length)
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
@@ -372,9 +386,22 @@ class slam_model_asr(torch.nn.Module):
             encoder_outs = encoder_out   
             encoder_feature_length = encoder_out_lens
 
+        if self.ctc_posterior:
+            print("Use CTC Posterior ...")
+            encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+        
         projector_outs = self.encoder_projector(encoder_outs) 
 
         projector_feature_length = encoder_feature_length // self.encoder_projector.k
+        
+        if self.ctc_posterior and self.voca_trans:
+            #    llm_embedding: nn.Embedding -> weight: [llm_vocab, hidden]
+            print("Vocabulary Transform is ready ...")
+            llm_embedding = self.llm.get_input_embeddings()
+            embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
+            #    projector_outs: [B, T', llm_vocab], embed_matrix  : [llm_vocab, hidden]
+            projector_outs = torch.einsum("btv,vh->bth", projector_outs, embed_matrix)
+            # print(projector_outs.shape)
         # print("\n","End",inputs_embeds, attention_mask, labels, position_ids,encoder_feature_length,projector_feature_length)
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
