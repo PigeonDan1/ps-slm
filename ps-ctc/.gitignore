@@ -8,3 +8,4 @@ exp_librispeech_qwen
 exp_librispeech_qwen_frozen_qwen
 exp_librispeech_qwen_frozen
 exp_librispeech_gemma_frozen
+exp_sensevoice_librispeech_qwen_frozen
