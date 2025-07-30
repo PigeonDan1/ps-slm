@@ -66,6 +66,9 @@ def setup_encoder_projector(train_config, model_config, **kwargs):
     elif model_config.encoder_projector == "q-former":
         from model.projector import EncoderProjectorQFormer
         encoder_projector = EncoderProjectorQFormer(model_config)
+    elif model_config.encoder_projector == "simple_linear":
+        from model.projector import EncoderProjectorLinear
+        encoder_projector = EncoderProjectorLinear(model_config)
     else:
          raise ValueError(f"Unknown projector type: {model_config.encoder_projector}")
     print_module_size(encoder_projector, model_config.encoder_projector, int(os.environ["RANK"]) if train_config.enable_fsdp or train_config.enable_ddp else 0)
@@ -302,7 +305,10 @@ class slam_model_asr(torch.nn.Module):
         # print(f"psd shape: {encoder_outs.shape}")
         if self.ctc_posterior:
             print("Use CTC Posterior ...")
-            encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+            if self.voca_trans: # don't give prob
+                encoder_outs = self.encoder.ctc.ctc_lo(encoder_outs)
+            else: 
+                encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
         
         projector_outs = self.encoder_projector(encoder_outs) 
         projector_feature_length = encoder_feature_length // self.encoder_projector.k
@@ -388,7 +394,10 @@ class slam_model_asr(torch.nn.Module):
 
         if self.ctc_posterior:
             print("Use CTC Posterior ...")
-            encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+            if self.voca_trans: # don't give prob
+                encoder_outs = self.encoder.ctc.ctc_lo(encoder_outs)
+            else: 
+                encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
         
         projector_outs = self.encoder_projector(encoder_outs) 
 
@@ -623,19 +632,19 @@ class slam_model_asr(torch.nn.Module):
     
 
 # debug to see the output from sensevoice
-        with torch.no_grad():
-            ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)
-            b, n, d = encoder_out.size()
-            for i in range(b):
-                x = ctc_probs[i, : encoder_out_lens[i].item(), :]
-                yseq = x.argmax(dim=-1)
-                yseq = torch.unique_consecutive(yseq, dim=-1)
-                mask = yseq != self.encoder.blank_id
-                token_int = yseq[mask].tolist()
-                import sentencepiece as spm
-                # 加载 BPE 模型
-                bpe_model_path = "/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall/chn_jpn_yue_eng_ko_spectok.bpe.model"
-                tokenizer = spm.SentencePieceProcessor()
-                tokenizer.load(bpe_model_path)
-                text = tokenizer.decode(token_int)
-                print()
+        # with torch.no_grad():
+        #     ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)
+        #     b, n, d = encoder_out.size()
+        #     for i in range(b):
+        #         x = ctc_probs[i, : encoder_out_lens[i].item(), :]
+        #         yseq = x.argmax(dim=-1)
+        #         yseq = torch.unique_consecutive(yseq, dim=-1)
+        #         mask = yseq != self.encoder.blank_id
+        #         token_int = yseq[mask].tolist()
+        #         import sentencepiece as spm
+        #         # 加载 BPE 模型
+        #         bpe_model_path = "/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall/chn_jpn_yue_eng_ko_spectok.bpe.model"
+        #         tokenizer = spm.SentencePieceProcessor()
+        #         tokenizer.load(bpe_model_path)
+        #         text = tokenizer.decode(token_int)
+        #         print()

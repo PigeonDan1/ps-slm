@@ -7,12 +7,12 @@ projector=linear
 use_peft=false
 use_fp16=false
 eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250728-1800-librispeech-lorafalse_asr_instruct_do_psd_true_ds_1_ctc_posterior_false_voca_trans_false/ps-slm_epoch_5_step_1000
-prompt_style="<|im_start|>user\n<speech>{}<|im_end|>\n<|im_start|>assistant\n" # audio first
+ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250729-1330-librispeech-lorafalse_asr_instruct_do_psd_true_ds_1_ctc_posterior_false_voca_trans_true_audio_first/ps-slm_epoch_2_step_2000
+# prompt_style="<|im_start|>user\n<speech>{}<|im_end|>\n<|im_start|>assistant\n" # audio first
 
 dataset=librispeech
 task=st
-split=test-other
+split=test-clean
 # test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/
 test_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
 # Choose Encoder

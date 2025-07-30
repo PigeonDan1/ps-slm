@@ -5,8 +5,8 @@ from torch.nn.parallel import DistributedDataParallel as DDP
 from torch.utils.data import DataLoader, DistributedSampler
 from transformers import AutoTokenizer, WhisperFeatureExtractor
 from tqdm import tqdm
-from dataset import JsonlCTCDataset, ctc_collate_fn, Vocabulary
-from model import WhisperCTC
+from dataset import JsonlCTCDataset, ctc_collate_fn, Vocabulary, KaldiFbankExtractor
+from model import WhisperCTC, SenseVoiceCTC
 
 def setup(rank, world_size, backend="hccl"):
     """初始化通信后端：NPU 用 hccl，GPU 用 nccl"""
@@ -18,7 +18,7 @@ def cleanup():
     dist.destroy_process_group()
 
 @torch.no_grad()
-def evaluate(model, dataloader, device, ctc_loss_fn, rank):
+def evaluate(model, dataloader, device, ctc_loss_fn, rank, encoder_name):
     model.eval()
     total_loss = 0
     total_batches = 0
@@ -27,9 +27,14 @@ def evaluate(model, dataloader, device, ctc_loss_fn, rank):
         labels = batch["labels"].to(device, non_blocking=True)
         input_lengths = batch["input_lengths"].to(device, non_blocking=True)
         label_lengths = batch["label_lengths"].to(device, non_blocking=True)
-        attention_mask = batch["attention_mask"].to(device, non_blocking=True)
-        logits = model(input_features, attention_mask)
-        log_probs = logits.log_softmax(2).transpose(0, 1)
+        if encoder_name == "whisper":
+            attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+            # print(attention_mask) 
+            logits = model(input_features, attention_mask)
+            log_probs = logits.log_softmax(2).transpose(0, 1) # (1500, 4, 151644)
+        else:
+            logits, input_lengths = model(input_features, input_lengths)
+            log_probs = logits.log_softmax(dim=-1).transpose(0, 1)  # [T, B, V]
         loss = ctc_loss_fn(log_probs, labels, input_lengths, label_lengths)
         total_loss += loss.item()
         total_batches += 1
@@ -65,42 +70,49 @@ def train(rank, world_size, args):
         blank_id = tokenizer.vocab_size
         use_custom_vocab = False
         print(f"Load Tokenizer from: {args.tokenizer_path}")
+    vocab_size = len(tokenizer) + 1 if use_custom_vocab else tokenizer.vocab_size + 1
+    
+    if args.encoder_name == "whisper":
+        feature_extractor = WhisperFeatureExtractor.from_pretrained(args.encoder_path)
+        model = WhisperCTC(
+            args.whisper_path,
+            vocab_size=vocab_size,
+            freeze_encoder=True
+        )
+    elif args.encoder_name == "sensevoice":
+        from model import SenseVoiceSmall
+        model, kwargs = SenseVoiceSmall.from_pretrained(args.encoder_path)
+        model = SenseVoiceCTC(model, vocab_size=vocab_size, freeze_encoder=True)
+        feature_extractor = KaldiFbankExtractor(kwargs)
 
-    feature_extractor = WhisperFeatureExtractor.from_pretrained(args.whisper_path)
-
-    dataset = JsonlCTCDataset(args.jsonl, tokenizer, feature_extractor, mode = "train")
+    dataset = JsonlCTCDataset(args.jsonl, tokenizer, feature_extractor, mode = "train", encoder=args.encoder_name)
     sampler = DistributedSampler(dataset, shuffle=True)
     dataloader = DataLoader(
         dataset,
         batch_size=args.batch_size,
         sampler=sampler,
         collate_fn=ctc_collate_fn,
-        num_workers=4,
+        num_workers=0,
         pin_memory=False
     )
     if args.valid_jsonl:
-        valid_dataset = JsonlCTCDataset(args.valid_jsonl, tokenizer, feature_extractor, mode="dev")
+        valid_dataset = JsonlCTCDataset(args.valid_jsonl, tokenizer, feature_extractor, mode="dev", encoder=args.encoder_name)
         valid_sampler = DistributedSampler(valid_dataset, shuffle=False)
         valid_dataloader = DataLoader(
             valid_dataset,
             batch_size=args.batch_size,
             sampler=valid_sampler,
             collate_fn=ctc_collate_fn,
-            num_workers=4,
+            num_workers=0,
             pin_memory=False
         )
     else:
         valid_dataloader = None
 
-    vocab_size = len(tokenizer) + 1 if use_custom_vocab else tokenizer.vocab_size + 1
-    model = WhisperCTC(
-        args.whisper_path,
-        vocab_size=vocab_size,
-        freeze_encoder=True
-    )
     model.to(device)
     model = DDP(model, device_ids=[rank])
-
+    import os
+    os.makedirs(args.save_path, exist_ok=True)
     # 优化器（weight_decay 可按需再调）
     optimizer = torch.optim.AdamW(
         model.parameters(),
@@ -143,11 +155,16 @@ def train(rank, world_size, args):
             labels = batch["labels"].to(device, non_blocking=True)
             input_lengths = batch["input_lengths"].to(device, non_blocking=True) # (len1, ..., len4)
             label_lengths = batch["label_lengths"].to(device, non_blocking=True)
-            attention_mask = batch["attention_mask"].to(device, non_blocking=True)
-            # print(attention_mask)
-            logits = model(input_features, attention_mask)
+            if args.encoder_name == "whisper":
+                attention_mask = batch["attention_mask"].to(device, non_blocking=True)
+                # print(attention_mask) 
+                logits = model(input_features, attention_mask)
+                log_probs = logits.log_softmax(2).transpose(0, 1) # (1500, 4, 151644)
+            else:
+                # print(f"input_lens: {input_lengths}")
+                logits, input_lengths = model(input_features, input_lengths)
+                log_probs = logits.log_softmax(dim=-1).transpose(0, 1)  # [T, B, V]
 
-            log_probs = logits.log_softmax(2).transpose(0, 1) # (1500, 4, 151644)
             loss = ctc_loss_fn(log_probs, labels, input_lengths, label_lengths)
             loss.backward()
             optimizer.step()
@@ -160,16 +177,15 @@ def train(rank, world_size, args):
                 # 每 N steps 验证+保存
                 if global_step % args.eval_steps == 0:
                     if valid_dataloader is not None:
-                        val_loss = evaluate(model, valid_dataloader, device, ctc_loss_fn, rank)
-                    ckpt_name = f"{args.save_path.replace('.pt', f'_step{global_step}.pt')}"
+                        val_loss = evaluate(model, valid_dataloader, device, ctc_loss_fn, rank, args.encoder_name)
+                    ckpt_name = os.path.join(args.save_path, f'step_{global_step}.pt')
                     torch.save(model.module.state_dict(), ckpt_name)
-
 
         # 评估+保存
         if valid_dataloader is not None:
-            evaluate(model, valid_dataloader, device, ctc_loss_fn, rank)
+            evaluate(model, valid_dataloader, device, ctc_loss_fn, rank, args.encoder_name)
         if rank == 0:
-            save_name = f"{args.save_path.replace('.pt', f'_epoch{epoch}.pt')}"
+            save_name = os.path.join(args.save_path, f'epoch_{epoch}.pt')
             torch.save(model.module.state_dict(), save_name)
 
     cleanup()
@@ -182,7 +198,8 @@ def main():
     parser.add_argument("--lr", type=float, default=1e-5)
     parser.add_argument("--save_path", default="whisper_ctc.pt")
     parser.add_argument("--tokenizer_path", default="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-7B-Instruct")
-    parser.add_argument("--whisper_path", default="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/openai-mirror/whisper-medium")
+    parser.add_argument("--encoder_name", default="whisper")
+    parser.add_argument("--encoder_path", default="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/openai-mirror/whisper-medium")
     parser.add_argument("--valid_jsonl", required=True)
     parser.add_argument("--eval_steps", type=int, default=1000, help="Run eval/save every N steps")
     parser.add_argument("--vocab_file", default=None, help="Path to vocab.txt. If set, will override tokenizer.")
