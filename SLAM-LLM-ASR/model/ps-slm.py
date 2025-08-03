@@ -17,6 +17,43 @@ from utils.model_utils import print_model_size, print_module_size
 from utils.npu_flash_attn import patch_npu_flash_attn
 
 logger = logging.getLogger(__name__)
+def ctc_greedy_search(
+                log_probs: torch.Tensor,
+                input_lens: torch.Tensor,
+                blank_id: int = 0,
+            ) -> List[List[int]]:
+                """
+                Args
+                ----
+                log_probs : (T, B, V)  log-softmax 后的概率
+                input_lens: (B,)        每条样本的有效帧长
+                blank_id  : int         blank 的编号
+
+                Returns
+                -------
+                List[List[int]] : 每条样本解码后的 token id 列表
+                """
+                T, B, V = log_probs.shape
+                input_lens = input_lens.long()
+                device = log_probs.device
+
+                # 1. argmax 得到每个时刻的 token
+                indices = log_probs.argmax(dim=-1)  # (T, B)
+
+                # 2. 逐条样本去重 & 去 blank
+                results = []
+                for b in range(B):
+                    seq = indices[:input_lens[b], b].cpu().tolist()  # 取有效帧
+                    # 去重 + 去 blank
+                    dedup = [seq[0]] if seq else []
+                    for t in range(1, len(seq)):
+                        if seq[t] != seq[t-1] and seq[t] != blank_id:
+                            dedup.append(seq[t])
+                    # 首尾可能还是 blank，再过滤一次
+                    final = [idx for idx in dedup if idx != blank_id]
+                    results.append(final)
+
+                return results
 def extract_variable_length_features(self, x: torch.Tensor):
         """
         x : torch.Tensor, shape = (batch_size, n_mels, n_ctx)
@@ -55,7 +92,6 @@ def setup_encoder(train_config, model_config, **kwargs):
 
     return encoder
 
-
 def setup_encoder_projector(train_config, model_config, **kwargs):
     if model_config.encoder_projector == "linear":
         from model.projector import EncoderProjectorConcat
@@ -69,9 +105,25 @@ def setup_encoder_projector(train_config, model_config, **kwargs):
     elif model_config.encoder_projector == "simple_linear":
         from model.projector import EncoderProjectorLinear
         encoder_projector = EncoderProjectorLinear(model_config)
-    else:
-         raise ValueError(f"Unknown projector type: {model_config.encoder_projector}")
-    print_module_size(encoder_projector, model_config.encoder_projector, int(os.environ["RANK"]) if train_config.enable_fsdp or train_config.enable_ddp else 0)
+        if model_config.ctc_linear:
+            ckpt = torch.load(
+            model_config.ctc_linear,
+            map_location="cpu"
+            )
+            state = ckpt.get("model", ckpt)          
+            proj_state = {
+                "weight": state["ctc_head.weight"],  # (151644, 512)
+                "bias":   state["ctc_head.bias"],    # (151644,)
+            }
+            missing, unexpected = encoder_projector.map.load_state_dict(
+                proj_state, strict=True
+            )
+            print("Pretrained CTC Head is loaded ...")
+            if train_config.freeze_encoder:
+                for name, param in encoder_projector.named_parameters(): 
+                    param.requires_grad = False
+                encoder_projector.eval()
+                print("CTC Head is Frozen ...")
     return encoder_projector
 
 
@@ -104,8 +156,14 @@ def setup_llm(train_config, model_config, **kwargs):
         logger.info("setup peft...")
         peft_config = generate_peft_config(train_config)
         model = get_peft_model(model, peft_config)
+        
+        if train_config.use_emb:
+            logger.info("embs are hot...")
+            for name, p in model.named_parameters():
+                if "embed_tokens" in name:
+                    p.requires_grad = True
+        
         model.print_trainable_parameters()
-
     print_module_size(model, model_config.llm_name, int(os.environ["RANK"]) if train_config.enable_fsdp or train_config.enable_ddp else 0)
     return model
 
@@ -148,7 +206,19 @@ def model_factory(train_config, model_config, **kwargs):
         logger.info("loading other parts from: {}".format(ckpt_path))
         ckpt_dict = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt_dict, strict=False)
-        
+        # def print_all_keys(obj, prefix=""):
+        #     """递归打印所有 key（或 tensor 名称）"""
+        #     if isinstance(obj, dict):
+        #         for k, v in obj.items():
+        #             logger.info(f"{prefix}{k}")
+        #             print_all_keys(v, prefix + "  ")
+        #     elif isinstance(obj, (torch.Tensor, np.ndarray)):
+        #         logger.info(f"{prefix}<Tensor shape: {tuple(obj.shape)}>")
+        #     else:
+        #         logger.info(f"{prefix}{type(obj)}")
+        #     input()
+
+        # print_all_keys(ckpt_dict)
 
     print_model_size(
         model,
@@ -190,6 +260,8 @@ class slam_model_asr(torch.nn.Module):
         self.train_config = train_config
         self.do_psd = train_config.do_psd
         self.voca_trans = train_config.voca_trans
+        self.gt_emb = train_config.gt_emb
+        self.top1_emb = train_config.top1_emb
         self.model_config = model_config
         if train_config.get("enable_deepspeed", False):
             def new_forward(self, input):
@@ -213,7 +285,7 @@ class slam_model_asr(torch.nn.Module):
             blank_threshold: float = 0.90
     ) -> Tuple[torch.Tensor, int]:
         """
-        删除前 4 帧后，再删除高置信 blank 帧，重新 padding。
+        删除高置信 blank 帧，重新 padding。
         返回:
             encoder_outs          : [B, T_new, D]  已 0-pad
             encoder_feature_length: int           T_new 的最大帧数
@@ -287,8 +359,7 @@ class slam_model_asr(torch.nn.Module):
         # 按官方顺序拼接
         speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1)
         speech_lengths = input_feature_length + 4  # 4 帧前缀
-        # print(speech)
-        # print(speech_lengths)
+        
         encoder_out, encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
         if isinstance(encoder_out, tuple):
             encoder_out = encoder_out[0]
@@ -296,17 +367,15 @@ class slam_model_asr(torch.nn.Module):
         # delete formulate output: first 4 tokens
         encoder_out      = encoder_out[:, 4:, :]          # [B, T-4, D]
         encoder_out_lens = torch.clamp(encoder_out_lens - 4, min=0)   # [B]
-        # print(f"raw_shape: {encoder_out.shape}")
         if self.do_psd:
             encoder_outs, encoder_feature_length= self.psd(encoder_out, encoder_out_lens, self.encoder.blank_id)
         else:
             encoder_outs = encoder_out   
             encoder_feature_length = encoder_out_lens
-        # print(f"psd shape: {encoder_outs.shape}")
         if self.ctc_posterior:
             print("Use CTC Posterior ...")
             if self.voca_trans: # don't give prob
-                encoder_outs = self.encoder.ctc.ctc_lo(encoder_outs)
+                encoder_outs = encoder_outs
             else: 
                 encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
         
@@ -314,15 +383,38 @@ class slam_model_asr(torch.nn.Module):
         projector_feature_length = encoder_feature_length // self.encoder_projector.k
 
         if self.ctc_posterior and self.voca_trans:
-            #    llm_embedding: nn.Embedding -> weight: [llm_vocab, hidden]
             print("Vocabulary Transform is ready ...")
             llm_embedding = self.llm.get_input_embeddings()
             embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
-            #    projector_outs: [B, T', llm_vocab], embed_matrix  : [llm_vocab, hidden]
-            projector_outs = torch.einsum("btv,vh->bth", projector_outs, embed_matrix)
-            # print(projector_outs.shape)
+            V_real = projector_outs.size(-1) - 1
+            logits_no_blank = projector_outs[..., :V_real]            
+            ctc_outs = torch.softmax(logits_no_blank,dim=-1)
+            projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])
+            if self.top1_emb:
+                # logits_no_blank: [B, T, V_real]   (已去掉 blank)
+                print("Use Top1 pred_emb ....")
+                top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
+                projector_outs = embed_matrix[top1_ids]                    # [B, T, H]            
 
-        # print("\n","End",inputs_embeds, attention_mask, labels, position_ids,encoder_feature_length,projector_feature_length)
+        if self.gt_emb:
+            print("Use Groundtruth Embeddings...")
+            pad_id = -100
+            device = labels.device
+            labels_mask = labels.ne(pad_id)          # [batch, L_total]
+            valid_lengths = labels_mask.sum(dim=1)   # [batch]
+            labels_no_pad = [lb[lb != pad_id] for lb in labels]  # list[Tensor]
+            embeds_no_pad = [self.llm.get_input_embeddings()(lb) for lb in labels_no_pad]  # list[Tensor]
+            max_len = valid_lengths.max().item()
+            embeds_padded = [
+                F.pad(e, (0, 0, 0, max_len - e.size(0)))  # pad 右侧 (seq_len, hidden_dim) -> (max_len, hidden_dim)
+                for e in embeds_no_pad
+            ]
+            projector_outs = torch.stack(embeds_padded, dim=0).to(device)
+            projector_feature_length = valid_lengths
+            # print(projector_outs.shape)
+            # print(projector_feature_length)
+            # input()  
+    
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
                 projector_outs, projector_feature_length, inputs_embeds, input_ids, attention_mask, labels
@@ -395,7 +487,7 @@ class slam_model_asr(torch.nn.Module):
         if self.ctc_posterior:
             print("Use CTC Posterior ...")
             if self.voca_trans: # don't give prob
-                encoder_outs = self.encoder.ctc.ctc_lo(encoder_outs)
+                encoder_outs = encoder_outs
             else: 
                 encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
         
@@ -404,14 +496,38 @@ class slam_model_asr(torch.nn.Module):
         projector_feature_length = encoder_feature_length // self.encoder_projector.k
         
         if self.ctc_posterior and self.voca_trans:
-            #    llm_embedding: nn.Embedding -> weight: [llm_vocab, hidden]
             print("Vocabulary Transform is ready ...")
             llm_embedding = self.llm.get_input_embeddings()
             embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
-            #    projector_outs: [B, T', llm_vocab], embed_matrix  : [llm_vocab, hidden]
-            projector_outs = torch.einsum("btv,vh->bth", projector_outs, embed_matrix)
-            # print(projector_outs.shape)
-        # print("\n","End",inputs_embeds, attention_mask, labels, position_ids,encoder_feature_length,projector_feature_length)
+            V_real = projector_outs.size(-1) - 1
+            logits_no_blank = projector_outs[..., :V_real]            
+            ctc_outs = torch.softmax(logits_no_blank,dim=-1)
+            projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])   
+            if self.top1_emb:
+                # logits_no_blank: [B, T, V_real]   (已去掉 blank)
+                print("Use Top1 pred_emb ....")
+                top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
+                projector_outs = embed_matrix[top1_ids]                    # [B, T, H]  
+        
+        if self.gt_emb:
+            print("Use Groundtruth Embeddings...")
+            pad_id = -100
+            device = labels.device
+            # print(labels)
+            # input()
+            labels_mask = labels.ne(pad_id)          # [batch, L_total]
+            valid_lengths = labels_mask.sum(dim=1)   # [batch]
+            labels_no_pad = [lb[lb != pad_id] for lb in labels]  # list[Tensor]
+            embeds_no_pad = [self.llm.get_input_embeddings()(lb) for lb in labels_no_pad]  # list[Tensor]
+            max_len = valid_lengths.max().item()
+            embeds_padded = [
+                F.pad(e, (0, 0, 0, max_len - e.size(0)))  # pad 右侧 (seq_len, hidden_dim) -> (max_len, hidden_dim)
+                for e in embeds_no_pad
+            ]
+            projector_outs = torch.stack(embeds_padded, dim=0).to(device)
+            projector_feature_length = valid_lengths
+            labels = None
+
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
                 projector_outs, projector_feature_length, inputs_embeds, input_ids, attention_mask, labels
@@ -631,6 +747,50 @@ class slam_model_asr(torch.nn.Module):
         return final_embedding, final_attention_mask, final_labels, position_ids, final_input_ids
     
 
+    def remove_blank_frames(self, logits, lengths, blank_id):
+        """
+        logits: (B, T, V) 原始 CTC logits
+        lengths: (B,) 原始有效帧数
+        blank_id: int blank token 的 id（这里等于 V_real）
+
+        返回:
+            new_logits : (B, T', V)  已去掉 blank 并重新 pad
+            new_lengths: (B,)        新的有效帧数
+        """
+        B, T, V = logits.shape
+        device = logits.device
+
+        # 1. 贪婪解码 token id
+        pred_ids = torch.argmax(logits, dim=-1)            # (B, T)
+
+        # 2. 逐条去掉 blank 帧
+        new_logits_list = []
+        new_lengths = []
+        max_len = 0
+
+        for b in range(B):
+            # 有效帧
+            L = lengths[b]
+            ids_b = pred_ids[b, :L]                          # 取有效部分
+            keep_mask = ids_b != blank_id                  # True 保留
+            new_logits_b = logits[b, :L][keep_mask]        # (L', V)
+
+            new_len = new_logits_b.size(0)
+            new_lengths.append(new_len)
+            new_logits_list.append(new_logits_b)
+            max_len = max(max_len, new_len)
+
+        # 3. 重新 padding
+        new_logits = []
+        for b in range(B):
+            pad_len = max_len - new_lengths[b]
+            padded = F.pad(new_logits_list[b], (0, 0, 0, pad_len))  # (max_len, V)
+            new_logits.append(padded)
+        new_logits = torch.stack(new_logits, dim=0)        # (B, max_len, V)
+        new_lengths = torch.tensor(new_lengths, device=device)
+
+        return new_logits, new_lengths
+
 # debug to see the output from sensevoice
         # with torch.no_grad():
         #     ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)
@@ -648,3 +808,4 @@ class slam_model_asr(torch.nn.Module):
         #         tokenizer.load(bpe_model_path)
         #         text = tokenizer.decode(token_int)
         #         print()
+    

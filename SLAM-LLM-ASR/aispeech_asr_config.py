@@ -36,7 +36,7 @@ class ModelConfig:
     encoder_dim: int = 768
     encoder_projector: str = "linear"
     encoder_projector_ds_rate: int = 2
-
+    ctc_linear: Optional[str] = None
 
 @dataclass
 class PeftConfig:
@@ -93,9 +93,13 @@ class TrainConfig:
     ctc_posterior:Optional[bool] = False
     voca_trans:Optional[bool] = False
     use_peft:bool = False
+    use_emb:bool = False
+    gt_emb:bool = False
+    top1_emb:bool = False
     peft_config:PeftConfig = field(default_factory=PeftConfig)
     output_dir:str = "PATH/to/save/PEFT/model"
     freeze_layers:bool = False
+    freeze_projector:bool = False
     num_freeze_layers:int = 1
     quantization:bool = False
     one_gpu:bool = False
@@ -125,7 +129,7 @@ class DataConfig:
     ds_rate: int = 8
     eval_max_frame_length: int = 2000
     multitask_prompt_path: str = "conf/multiprompt.jsonl"
-    prompt_style: str = "<|im_start|>user\n<speech>{}<|im_end|>\n<|im_start|>assistant\n"
+    prompt_style: str = "<|im_start|>user\n{}<speech><|im_end|>\n<|im_start|>assistant\n"
     append_info_tasks : List = field(default_factory=lambda: ["hotword"])
     # file: str = "dataset/speech_dataset_large.py:get_speech_dataset"
     train_scp_file_path: str = ""

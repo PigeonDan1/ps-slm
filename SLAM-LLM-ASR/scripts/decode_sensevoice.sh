@@ -3,33 +3,36 @@ run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
 cd  $run_dir
 code_dir=.
 
-projector=linear
-use_peft=false
+projector=simple_linear #simple_linear
+ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt # need to load pretrained ctc head if ctc head is frozen
+
+use_peft=true
 use_fp16=false
+gt_emb=false # whether use gt's emb as input
 eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250729-1330-librispeech-lorafalse_asr_instruct_do_psd_true_ds_1_ctc_posterior_false_voca_trans_true_audio_first/ps-slm_epoch_2_step_2000
-# prompt_style="<|im_start|>user\n<speech>{}<|im_end|>\n<|im_start|>assistant\n" # audio first
+ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250802-1941-librispeech-loratrue_asr_instruct_do_psd_true_ds_1_ctc_posterior_true_voca_trans_true_instruction_first/ps-slm_epoch_3_step_2000
 
 dataset=librispeech
-task=st
-split=test-clean
-# test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/
-test_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
+task=asr
+split=test-other
+test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/
+# test_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
 encoder_dim=512 #25055 #512
 encoder_projector_ds_rate=1
-do_psd=true # whether use psd to ds
-ctc_posterior=false # whether use ctc posterior
-voca_trans=true # whether use vocabulary transfer
 
+do_psd=true # whether use psd to ds
+ctc_posterior=true # whether use ctc posterior
+voca_trans=true # whether use vocabulary transfer
+top1_emb=false
 llm_name="Qwen2.5-1.5B-Instruct"
 llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
-llm_dim=1536 #151936 #1536
+llm_dim=151936 #151936 #1536
 
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
-run_decode_device=3 # run decode on certain device
+run_decode_device=1 # run decode on certain device
 decode_log=$ckpt_path/decode_${dataset}_${task}_${split}
 python \
     $code_dir/inference_batch.py \
@@ -42,6 +45,7 @@ python \
     ++model_config.encoder_path=$speech_encoder_path \
     ++model_config.encoder_dim=$encoder_dim \
     ++model_config.encoder_projector=$projector \
+    ++model_config.ctc_linear=$ctc_linear \
     ++dataset_config.dataset=$dataset \
     ++dataset_config.encoder=$encoder_name \
     ++dataset_config.encoder_path=$speech_encoder_path \
@@ -51,6 +55,8 @@ python \
     ++train_config.device=$run_decode_device \
     ++train_config.use_peft=$use_peft \
     ++train_config.batching_strategy=dynamic \
+    ++train_config.gt_emb=$gt_emb \
+    ++train_config.top1_emb=$top1_emb \
     ++train_config.num_epochs=1 \
     ++train_config.do_psd=$do_psd \
     ++train_config.ctc_posterior=$ctc_posterior \

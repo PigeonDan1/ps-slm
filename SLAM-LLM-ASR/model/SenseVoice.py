@@ -629,7 +629,7 @@ class SenseVoiceSmall(nn.Module):
         self.error_calculator = None
 
         self.ctc = ctc
-
+        self.ctc_linear = None # pj: add external ctc layer
         self.length_normalized_loss = length_normalized_loss
         self.encoder_output_size = encoder_output_size
 

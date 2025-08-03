@@ -6,10 +6,10 @@ class EncoderProjectorLinear(nn.Module):
         super().__init__()
         self.k = config.encoder_projector_ds_rate
         self.encoder_dim = config.encoder_dim
-        self.llm_vocab = config.llm_dim   # V2
+        self.llm_vocab = config.llm_dim - 292   # V2
 
         # 一步到位： (encoder_dim * k) → V2
-        self.map = nn.Linear(self.encoder_dim * self.k, self.llm_vocab, bias=False)
+        self.map = nn.Linear(self.encoder_dim * self.k, self.llm_vocab, bias=True)
 
     def forward(self, x):
         B, T, D = x.size()
@@ -20,8 +20,7 @@ class EncoderProjectorLinear(nn.Module):
 
         x = x.view(B, T // self.k, D * self.k)      # [B, T', D*k]
         logits = self.map(x)                        # [B, T', V2]
-        probs  = torch.softmax(logits, dim=-1)      # normalization
-        return probs                                # [B, T', V2]
+        return logits                                # [B, T', V2]
 
 class EncoderProjectorConcat(nn.Module):
     def __init__(self, config):

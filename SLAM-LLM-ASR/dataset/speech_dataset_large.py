@@ -149,11 +149,12 @@ class MultiTaskDataset(IterableDataset):
                             'key': key,
                             'target': target,
                     }
-
-                    if  not self.inference_mode:
+                    
+                    if  not self.inference_mode: 
                         labels = copy.deepcopy(input_ids)
                         labels[:prompt_length] = self.tokenizer.default_ignore_token
                         result["labels"] = labels
+                
                     yield result
                     # except:
                     #     print(data_index,item)
@@ -225,7 +226,7 @@ class MultiTaskDataset(IterableDataset):
             for s in samples
         ])
 
-        if not self.inference_mode:
+        if not self.inference_mode: 
             labels = torch.stack([
                 self.pad(s['labels'], input_ids_max_length,
                         self.tokenizer.default_ignore_token, padding_style=padding_style)

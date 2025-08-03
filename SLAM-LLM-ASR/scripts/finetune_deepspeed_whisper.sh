@@ -21,7 +21,7 @@ eval_max_frame_length=3000
 multitask_prompt_path=conf/multiprompt.jsonl
 # prompt_style="\{\}\\<speech\\>" # "<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n" | "USER: {}\n ASSISTANT:"
 projector=linear
-
+ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/step_10000.pt
 use_peft=true # For llm
 use_fp16=true
 freeze_encoder=false
@@ -50,6 +50,7 @@ hydra.run.dir=$output_dir \
 ++model_config.encoder_dim=$encoder_dim \
 ++model_config.encoder_projector=$projector \
 ++model_config.encoder_projector_ds_rate=$encoder_projector_ds_rate \
+++model_config.ctc_linear=$ctc_linear \ 
 ++dataset_config.train_max_frame_length=$train_max_frame_length \
 ++dataset_config.eval_max_frame_length=$eval_max_frame_length \
 ++dataset_config.multitask_prompt_path=$multitask_prompt_path \
