@@ -21,31 +21,31 @@ train_max_frame_length=1500
 eval_max_frame_length=3000
 multitask_prompt_path=conf/multiprompt.jsonl
 
-projector=simple_linear # simple linear for ctc head, linear is normal type
+projector=linear # simple linear for ctc head, linear is normal type
 ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
 use_peft=true # For llm
 use_emb=false # For llm input_embs
-gt_emb=false # whether use gt's emb as input
+gt_emb=true # whether use gt's emb as input
 top1_emb=false # whether use top1's emb as input
 use_fp16=true
 freeze_encoder=true
-freeze_projector=true
+freeze_projector=false
 do_psd=true # whether use psd to ds
 ctc_posterior=true # whether use ctc posterior
-voca_trans=true # whether use vocabulary transfer
+voca_trans=false # whether use vocabulary transfer
 # use absolute path
 deepspeed_config=conf/ds_config.json
 
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
-encoder_dim=512 #25055 #512
+encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
 llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
-llm_dim=151936 #151936 # 1536
+llm_dim=1536 #151936 # 1536
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
 # prompt_style='<|im_start|>user\\n<speech>{}<|im_end|>\\n<|im_start|>assistant\\n' # audio first
 prompt_fig=instruction_first

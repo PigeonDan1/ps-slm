@@ -10,7 +10,6 @@ from typing import List, Optional, Tuple, Union
 
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from peft import PeftModel, LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
-
 from utils.metric import compute_accuracy
 from utils.config_utils import generate_peft_config
 from utils.model_utils import print_model_size, print_module_size
@@ -261,6 +260,10 @@ class slam_model_asr(torch.nn.Module):
         self.do_psd = train_config.do_psd
         self.voca_trans = train_config.voca_trans
         self.gt_emb = train_config.gt_emb
+        if self.gt_emb:
+            from model.tokenizer import SenseVoiceTokenizer
+            self.encoder_tokenizer = SenseVoiceTokenizer(model_config.encoder_path)  
+    
         self.top1_emb = train_config.top1_emb
         self.model_config = model_config
         if train_config.get("enable_deepspeed", False):
@@ -325,6 +328,51 @@ class slam_model_asr(torch.nn.Module):
         new_lens = torch.tensor(new_lens, dtype=torch.long, device=device)
         return encoder_outs, new_lens
     
+    def ids2text(self, ids: torch.LongTensor, llm):
+        """
+        ids: [B, T]  已 padding，-100 位置忽略
+        llm: transformers.PreTrainedModel / AutoModelForCausalLM
+        return: list[str]  每条样本的文本
+        """
+        # 1. 把 -100 变成 pad_token_id，其余保持
+        pad_id = llm.config.pad_token_id if llm.config.pad_token_id is not None else llm.config.eos_token_id
+        ids = torch.where(ids == -100, pad_id, ids)
+
+        # 2. 解码
+        text_list = self.tokenizer.batch_decode(
+            ids,
+            skip_special_tokens=True,
+            clean_up_tokenization_spaces=True
+        )
+        return text_list
+
+    import torch
+
+    def ctc_pseudo_posterior(self, texts):
+        """
+        texts: list[str]  —— 已解码文本
+        return: 
+            posterior: [B, L_max, vocab_size]  one-hot 伪后验
+            lens:      [B]   每条样本的真实 token 长度
+        """
+        tok = self.encoder_tokenizer
+        ids_list = [tok.encode(t) for t in texts]
+
+        # 真实长度
+        lens = torch.tensor([len(ids) for ids in ids_list], dtype=torch.long)
+
+        # 对齐长度
+        max_len = lens.max().item()
+        vocab_size = tok.vocab_size
+
+        # one-hot 伪后验
+        B = len(ids_list)
+        posterior = torch.zeros(B, max_len, vocab_size, dtype=torch.float32)
+        for b, ids in enumerate(ids_list):
+            posterior[b, torch.arange(len(ids)), ids] = 1.0
+
+        return posterior, lens
+
     def forward(self,
                 input_ids: torch.LongTensor = None,
                 input_features: Optional[torch.Tensor] = None,
@@ -378,7 +426,17 @@ class slam_model_asr(torch.nn.Module):
                 encoder_outs = encoder_outs
             else: 
                 encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
-        
+                if self.gt_emb:
+                    print("Use Groundtruth Embeddings...")
+                    texts = self.ids2text(labels, self.llm) 
+                    device = labels.device
+                    encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
+                    encoder_outs          = encoder_outs.to(device, non_blocking=True)
+                    encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
+                    # print(encoder_outs.shape)
+                    # first_ids = encoder_outs[0, :encoder_feature_length[0]].argmax(-1).tolist()
+                    # decoded   = self.encoder_tokenizer.decode(first_ids)
+                    
         projector_outs = self.encoder_projector(encoder_outs) 
         projector_feature_length = encoder_feature_length // self.encoder_projector.k
 
@@ -395,26 +453,7 @@ class slam_model_asr(torch.nn.Module):
                 print("Use Top1 pred_emb ....")
                 top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
                 projector_outs = embed_matrix[top1_ids]                    # [B, T, H]            
-
-        if self.gt_emb:
-            print("Use Groundtruth Embeddings...")
-            pad_id = -100
-            device = labels.device
-            labels_mask = labels.ne(pad_id)          # [batch, L_total]
-            valid_lengths = labels_mask.sum(dim=1)   # [batch]
-            labels_no_pad = [lb[lb != pad_id] for lb in labels]  # list[Tensor]
-            embeds_no_pad = [self.llm.get_input_embeddings()(lb) for lb in labels_no_pad]  # list[Tensor]
-            max_len = valid_lengths.max().item()
-            embeds_padded = [
-                F.pad(e, (0, 0, 0, max_len - e.size(0)))  # pad 右侧 (seq_len, hidden_dim) -> (max_len, hidden_dim)
-                for e in embeds_no_pad
-            ]
-            projector_outs = torch.stack(embeds_padded, dim=0).to(device)
-            projector_feature_length = valid_lengths
-            # print(projector_outs.shape)
-            # print(projector_feature_length)
-            # input()  
-    
+             
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
                 projector_outs, projector_feature_length, inputs_embeds, input_ids, attention_mask, labels
@@ -444,6 +483,7 @@ class slam_model_asr(torch.nn.Module):
                 output_attentions: Optional[bool] = None,
                 output_hidden_states: Optional[bool] = None,
                 return_dict: Optional[bool] = None,
+                targets: Optional[str] = None,
                 **kwargs
                 ):
         
@@ -511,22 +551,13 @@ class slam_model_asr(torch.nn.Module):
         
         if self.gt_emb:
             print("Use Groundtruth Embeddings...")
-            pad_id = -100
-            device = labels.device
-            # print(labels)
-            # input()
-            labels_mask = labels.ne(pad_id)          # [batch, L_total]
-            valid_lengths = labels_mask.sum(dim=1)   # [batch]
-            labels_no_pad = [lb[lb != pad_id] for lb in labels]  # list[Tensor]
-            embeds_no_pad = [self.llm.get_input_embeddings()(lb) for lb in labels_no_pad]  # list[Tensor]
-            max_len = valid_lengths.max().item()
-            embeds_padded = [
-                F.pad(e, (0, 0, 0, max_len - e.size(0)))  # pad 右侧 (seq_len, hidden_dim) -> (max_len, hidden_dim)
-                for e in embeds_no_pad
-            ]
-            projector_outs = torch.stack(embeds_padded, dim=0).to(device)
-            projector_feature_length = valid_lengths
-            labels = None
+            import re
+            texts = [re.sub(r"[^A-Za-z\s.,!?']+", "", t).lower().strip() for t in targets]
+            device = input_ids.device
+            encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
+            encoder_outs          = encoder_outs.to(device, non_blocking=True)
+            encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
+            
 
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
