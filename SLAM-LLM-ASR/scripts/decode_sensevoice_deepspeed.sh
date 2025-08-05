@@ -10,11 +10,11 @@ use_peft=true
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/project/ps-slm/SLAM-LLM-ASR/exp/20250725-2053-librispeech-loratrue_asr_instruct_do_psd_false_ds_5/ps-slm_epoch_5_step_1800
+ckpt_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/project/ps-slm/SLAM-LLM-ASR/exp/20250725-1758-librispeech-loratrue_asr_instruct/ps-slm_epoch_4_step_1800
 
-dataset=librispeech
-task=asr
-split=test-other
+dataset=test
+task=tts_en_rare_words
+split=
 test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/
 # test_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
 # Choose Encoder
@@ -34,8 +34,10 @@ llm_dim=1536 #151936 #1536
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
 run_decode_device=0 # run decode on certain device
 decode_log=$ckpt_path/decode_${dataset}_${task}_${split}
-python \
-    $code_dir/inference_batch.py \
+deepspeed \
+    --include localhost:0,1,2,3,4,5,6,7 \
+    --master_port 40015 \
+    $code_dir/inference_batch_deepspeed.py \
     hydra.run.dir=$ckpt_path \
     ++model_config.file=$model_factory \
     ++model_config.encoder_projector_ds_rate=$encoder_projector_ds_rate \
