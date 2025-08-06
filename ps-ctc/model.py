@@ -135,19 +135,19 @@ class SenseVoiceCTC(nn.Module):
 
         speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1)
         speech_lengths = input_feature_length + 4  # 4 帧前缀
-        encoder_out, encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
+        encoder_out, encoder_out_lens = self.encoder.encoder(speech, speech_lengths) # raw feature from sensevoice
         if isinstance(encoder_out, tuple):
             encoder_out = encoder_out[0]
         encoder_out      = encoder_out[:, 4:, :]          # [B, T-4, D]
         encoder_out_lens = torch.clamp(encoder_out_lens - 4, min=0)   # [B]
         # print(f"raw_input_lens: {encoder_out_lens}")
         # print(f"raw_shape: {encoder_out.shape}")
-        encoder_outs, encoder_feature_length= self.psd(encoder_out, encoder_out_lens, self.encoder.blank_id)
-        logits = self.ctc_head(encoder_outs)
+        # encoder_outs, encoder_feature_length= self.psd(encoder_out, encoder_out_lens, self.encoder.blank_id) # do psd
+        logits = self.ctc_head(encoder_out)
         # print(f"new_shape: {logits.shape}") 
         # print(f"new_lens: {encoder_feature_length}")
         # input()
-        return logits, encoder_feature_length
+        return logits, encoder_out_lens
     
 
 # Adapted from SenseVoice (https://github.com/FunAudioLLM/SenseVoice)

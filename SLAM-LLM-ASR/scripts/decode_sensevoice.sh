@@ -8,23 +8,28 @@ projector=linear #simple_linear
 
 use_peft=true
 use_fp16=false
-gt_emb=true # whether use gt's emb as input, actually here refers to gt one-hot
+gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250803-2227-librispeech-loratrue_asr_instruct_do_psd_true_ds_1_ctc_posterior_true_voca_trans_false_instruction_first/ps-slm_epoch_1_step_2000
-
+ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250725-2053-librispeech-loratrue_asr_instruct_do_psd_false_ds_5/ps-slm_epoch_5_step_1800
 dataset=librispeech
 task=asr
 split=test-other
-test_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/
+
+if [ "$dataset" = "librispeech" ]; then
+    test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
+elif [ "$dataset" = "tts_en_rare_words" ]; then
+    test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/test/${dataset}"
+fi
+
 # test_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
-encoder_dim=25055 #25055 #512
-encoder_projector_ds_rate=1
+encoder_dim=512 #25055 #512
+encoder_projector_ds_rate=5
 
-do_psd=true # whether use psd to ds
-ctc_posterior=true # whether use ctc posterior
+do_psd=false # whether use psd to ds
+ctc_posterior=false # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 top1_emb=false
 llm_name="Qwen2.5-1.5B-Instruct"

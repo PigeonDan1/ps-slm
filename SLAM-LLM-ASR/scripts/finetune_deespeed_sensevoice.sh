@@ -17,22 +17,22 @@ dataset=librispeech
 task=asr
 train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
 dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
-train_max_frame_length=1500
+train_max_frame_length=2000
 eval_max_frame_length=3000
 multitask_prompt_path=conf/multiprompt.jsonl
 
 projector=linear # simple linear for ctc head, linear is normal type
-ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
+# ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
-use_peft=true # For llm
+use_peft=false # For llm
 use_emb=false # For llm input_embs
-gt_emb=true # whether use gt's emb as input
+gt_emb=false # whether use gt's emb as input
 top1_emb=false # whether use top1's emb as input
 use_fp16=true
 freeze_encoder=true
 freeze_projector=false
 do_psd=true # whether use psd to ds
-ctc_posterior=true # whether use ctc posterior
+ctc_posterior=false # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 # use absolute path
 deepspeed_config=conf/ds_config.json
@@ -40,7 +40,7 @@ deepspeed_config=conf/ds_config.json
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
-encoder_dim=25055 #25055 #512
+encoder_dim=512 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
@@ -82,7 +82,7 @@ hydra.run.dir=$output_dir \
 ++train_config.gt_emb=$gt_emb \
 ++train_config.top1_emb=$top1_emb \
 ++train_config.batching_strategy=dynamic \
-++train_config.validation_interval=2000 \
+++train_config.validation_interval=1500 \
 ++train_config.num_workers_dataloader=4 \
 ++train_config.output_dir=$output_dir \
 ++metric=acc \

@@ -138,8 +138,8 @@ def train(rank, world_size, args):
 
     scheduler = LambdaLR(optimizer, lr_lambda)
     ctc_loss_fn = torch.nn.CTCLoss(blank=blank_id, zero_infinity=True)
-    print(blank_id)
-    input()
+    # print(blank_id)
+    # input()
     model.train()
     global_step = 0
     for epoch in range(args.epochs):

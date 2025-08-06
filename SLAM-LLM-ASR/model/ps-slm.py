@@ -205,19 +205,6 @@ def model_factory(train_config, model_config, **kwargs):
         logger.info("loading other parts from: {}".format(ckpt_path))
         ckpt_dict = torch.load(ckpt_path, map_location="cpu")
         model.load_state_dict(ckpt_dict, strict=False)
-        # def print_all_keys(obj, prefix=""):
-        #     """递归打印所有 key（或 tensor 名称）"""
-        #     if isinstance(obj, dict):
-        #         for k, v in obj.items():
-        #             logger.info(f"{prefix}{k}")
-        #             print_all_keys(v, prefix + "  ")
-        #     elif isinstance(obj, (torch.Tensor, np.ndarray)):
-        #         logger.info(f"{prefix}<Tensor shape: {tuple(obj.shape)}>")
-        #     else:
-        #         logger.info(f"{prefix}{type(obj)}")
-        #     input()
-
-        # print_all_keys(ckpt_dict)
 
     print_model_size(
         model,
@@ -280,52 +267,139 @@ class slam_model_asr(torch.nn.Module):
                 if isinstance(item, nn.LayerNorm):
                     item.forward = types.MethodType(new_forward, item)
 
+    # def psd(
+    #         self,
+    #         encoder_out: torch.Tensor,
+    #         encoder_out_lens: torch.Tensor,
+    #         blank_id: int = 0,
+    #         blank_threshold: float = 0.90
+    # ) -> Tuple[torch.Tensor, int]:
+    #     """
+    #     删除高置信 blank 帧，重新 padding，老版本-没有merge!。
+    #     返回:
+    #         encoder_outs          : [B, T_new, D]  已 0-pad
+    #         encoder_feature_length: int           T_new 的最大帧数
+    #     """
+    #     B, T, D = encoder_out.shape
+    #     device  = encoder_out.device
+
+    #     with torch.no_grad():
+    #         ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)  # [B, T, V]
+
+    #     keep_frames = []
+    #     new_lens    = []
+    #     for b in range(B):
+    #         L = encoder_out_lens[b].item()
+    #         if L == 0:                      # 极端情况
+    #             keep_frames.append([])
+    #             new_lens.append(0)
+    #             continue
+
+    #         prob_blank = ctc_probs[b, :L, blank_id]            # [L]
+    #         mask = prob_blank < blank_threshold                # True 表示保留
+    #         idx  = torch.nonzero(mask, as_tuple=False).squeeze(-1)
+    #         keep_frames.append(encoder_out[b, idx])            # [M, D]
+    #         new_lens.append(idx.size(0))
+
+    #     max_len = max(new_lens) if new_lens else 0
+    #     if max_len == 0:                       # 整批都是空
+    #         return encoder_out.new_zeros(B, 0, D), 0
+
+    #     padded = []
+    #     for feat in keep_frames:
+    #         pad_len = max_len - feat.size(0)
+    #         if pad_len > 0:
+    #             feat = torch.cat([feat, feat.new_zeros(pad_len, D)], dim=0)
+    #         padded.append(feat)
+    #     encoder_outs = torch.stack(padded, dim=0)   # [B, T_new, D]
+    #     new_lens = torch.tensor(new_lens, dtype=torch.long, device=device)
+    #     return encoder_outs, new_lens
+
     def psd(
             self,
-            encoder_out: torch.Tensor,
-            encoder_out_lens: torch.Tensor,
+            encoder_out: torch.Tensor,      # [B, T, D]
+            encoder_out_lens: torch.Tensor, # [B]
+            ctc_posterior: torch.Tensor,    # [B, T, V]  <-- 新增输入
             blank_id: int = 0,
             blank_threshold: float = 0.90
-    ) -> Tuple[torch.Tensor, int]:
+    ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        删除高置信 blank 帧，重新 padding。
+        1. 只合并相邻且相同的非 blank 字符帧（空白帧不合并）
+        2. 若某字符连续帧数>5则打印
+        3. 用 blank 概率阈值 0.9 统一删除 blank 帧
+        4. 重新 0-pad
         返回:
-            encoder_outs          : [B, T_new, D]  已 0-pad
-            encoder_feature_length: int           T_new 的最大帧数
+            encoder_outs : [B, T_new, D]
+            new_lens     : [B]   每句实际帧长
         """
         B, T, D = encoder_out.shape
         device  = encoder_out.device
 
-        with torch.no_grad():
-            ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)  # [B, T, V]
-
-        keep_frames = []
-        new_lens    = []
+        is_log_prob = ctc_posterior.max() <= 0
+        ctc_probs = ctc_posterior.exp() if is_log_prob else ctc_posterior
+        # print(f"raw_shape: {encoder_out.shape}, raw_lens: {encoder_out_lens}")
+        keep_frames, new_lens = [], []
         for b in range(B):
             L = encoder_out_lens[b].item()
-            if L == 0:                      # 极端情况
-                keep_frames.append([])
+            if L == 0:
+                keep_frames.append(encoder_out.new_zeros(0, D))
                 new_lens.append(0)
                 continue
 
-            prob_blank = ctc_probs[b, :L, blank_id]            # [L]
-            mask = prob_blank < blank_threshold                # True 表示保留
-            idx  = torch.nonzero(mask, as_tuple=False).squeeze(-1)
-            keep_frames.append(encoder_out[b, idx])            # [M, D]
-            new_lens.append(idx.size(0))
+            ids = ctc_probs[b, :L].argmax(dim=-1)  # [L]
 
+            # ---- 合并相邻相同非 blank 字符帧 ----
+            merged_feats, merged_blank_probs = [], []
+            start = 0
+            for end in range(1, L + 1):
+                if end == L or ids[end] != ids[start]:
+                    seg_len = end - start
+                    char_id = ids[start].item()
+
+                    if char_id == blank_id:
+                        # blank 帧：每帧单独保留
+                        for t in range(start, end):
+                            merged_feats.append(encoder_out[b, t])
+                            merged_blank_probs.append(ctc_probs[b, t, blank_id])
+                    else:
+                        # 非 blank：合并整段
+                        if seg_len > 5:
+                            print(f"[PSD] Warning: batch={b}, char={char_id}, "
+                                f"continuous frames={seg_len} (>5)")
+                        # print(f"seglen: {seg_len}")
+                        merged_feats.append(encoder_out[b, start:end].mean(dim=0))
+                        avg_blank_prob = ctc_probs[b, start:end, blank_id].mean()
+                        merged_blank_probs.append(avg_blank_prob)
+                    start = end
+
+            merged_feats = torch.stack(merged_feats, dim=0)           # [T_merged, D]
+            merged_blank_probs = torch.tensor(merged_blank_probs,
+                                            device=device)        # [T_merged]
+
+            # ---- 用阈值 0.9 过滤 blank ----
+            mask = merged_blank_probs < blank_threshold
+            keep = mask.nonzero(as_tuple=False).squeeze(-1)
+            feats_after_blank = merged_feats[keep]                    # [M, D]
+
+            keep_frames.append(feats_after_blank)
+            new_lens.append(feats_after_blank.size(0))
+
+        # 4) pad 到 batch 最大长度
         max_len = max(new_lens) if new_lens else 0
-        if max_len == 0:                       # 整批都是空
-            return encoder_out.new_zeros(B, 0, D), 0
+        if max_len == 0:
+            return encoder_out.new_zeros(B, 0, D), \
+                encoder_out.new_zeros(B, dtype=torch.long, device=device)
 
         padded = []
         for feat in keep_frames:
             pad_len = max_len - feat.size(0)
             if pad_len > 0:
-                feat = torch.cat([feat, feat.new_zeros(pad_len, D)], dim=0)
+                feat = F.pad(feat, (0, 0, 0, pad_len), value=0.)
             padded.append(feat)
-        encoder_outs = torch.stack(padded, dim=0)   # [B, T_new, D]
+        encoder_outs = torch.stack(padded, dim=0)  # [B, T_new, D]
         new_lens = torch.tensor(new_lens, dtype=torch.long, device=device)
+        # print(f"encoder_outs_shape: {encoder_outs.shape}, new_lens: {new_lens}")
+        # input()
         return encoder_outs, new_lens
     
     def ids2text(self, ids: torch.LongTensor, llm):
@@ -361,6 +435,9 @@ class slam_model_asr(torch.nn.Module):
         # 真实长度
         lens = torch.tensor([len(ids) for ids in ids_list], dtype=torch.long)
 
+        # for t, ids in zip(texts, ids_list):
+        #     print(tok.decode(ids), t)
+        # input()
         # 对齐长度
         max_len = lens.max().item()
         vocab_size = tok.vocab_size
@@ -408,24 +485,20 @@ class slam_model_asr(torch.nn.Module):
         speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1)
         speech_lengths = input_feature_length + 4  # 4 帧前缀
         
-        encoder_out, encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
-        if isinstance(encoder_out, tuple):
-            encoder_out = encoder_out[0]
+        raw_encoder_out, raw_encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
+        if isinstance(raw_encoder_out, tuple):
+            raw_encoder_out = raw_encoder_out[0]
 
         # delete formulate output: first 4 tokens
-        encoder_out      = encoder_out[:, 4:, :]          # [B, T-4, D]
-        encoder_out_lens = torch.clamp(encoder_out_lens - 4, min=0)   # [B]
-        if self.do_psd:
-            encoder_outs, encoder_feature_length= self.psd(encoder_out, encoder_out_lens, self.encoder.blank_id)
-        else:
-            encoder_outs = encoder_out   
-            encoder_feature_length = encoder_out_lens
+        raw_logits = self.encoder.ctc.ctc_lo(raw_encoder_out)
+        raw_ctc_posterior = torch.softmax(raw_logits, dim=-1)
+        ctc_posterior = raw_ctc_posterior[:, 4:, :]
+        encoder_out      = raw_encoder_out[:, 4:, :]          # [B, T-4, D]
+        encoder_out_lens = torch.clamp(raw_encoder_out_lens - 4, min=0)   # [B]
+
         if self.ctc_posterior:
             print("Use CTC Posterior ...")
-            if self.voca_trans: # don't give prob
-                encoder_outs = encoder_outs
-            else: 
-                encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+            if self.voca_trans == False: 
                 if self.gt_emb:
                     print("Use Groundtruth Embeddings...")
                     texts = self.ids2text(labels, self.llm) 
@@ -433,33 +506,60 @@ class slam_model_asr(torch.nn.Module):
                     encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
                     encoder_outs          = encoder_outs.to(device, non_blocking=True)
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
-                    # print(encoder_outs.shape)
-                    # first_ids = encoder_outs[0, :encoder_feature_length[0]].argmax(-1).tolist()
-                    # decoded   = self.encoder_tokenizer.decode(first_ids)
-                    
-        projector_outs = self.encoder_projector(encoder_outs) 
-        projector_feature_length = encoder_feature_length // self.encoder_projector.k
+                else:
+                    if self.do_psd:
+                        # encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens,self.encoder.blank_id)
+                        # encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+                        encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
+                    else:
+                        encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
 
-        if self.ctc_posterior and self.voca_trans:
-            print("Vocabulary Transform is ready ...")
-            llm_embedding = self.llm.get_input_embeddings()
-            embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
-            V_real = projector_outs.size(-1) - 1
-            logits_no_blank = projector_outs[..., :V_real]            
-            ctc_outs = torch.softmax(logits_no_blank,dim=-1)
-            projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])
-            if self.top1_emb:
-                # logits_no_blank: [B, T, V_real]   (已去掉 blank)
-                print("Use Top1 pred_emb ....")
-                top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
-                projector_outs = embed_matrix[top1_ids]                    # [B, T, H]            
-             
+                projector_outs = self.encoder_projector(encoder_outs) 
+                projector_feature_length = encoder_feature_length // self.encoder_projector.k     
+
+            else:
+                print("Vocabulary Transform is ready ...")
+                if self.do_psd: # projector serves as a ctc head
+                    projector_outs = self.encoder_projector(encoder_outs) 
+                    projector_feature_length = encoder_feature_length // self.encoder_projector.k
+                    ctc_posterior = torch.softmax(projector_outs,dim=-1)
+                    projector_outs, projector_feature_length= self.psd(projector_outs, projector_feature_length, ctc_posterior, 151643)
+                    llm_embedding = self.llm.get_input_embeddings()
+                    embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
+                    V_real = projector_outs.size(-1) - 1
+                    logits_no_blank = projector_outs[..., :V_real]            
+                    ctc_outs = torch.softmax(logits_no_blank,dim=-1)
+                    projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])
+                    if self.top1_emb:
+                        # logits_no_blank: [B, T, V_real]   (已去掉 blank)
+                        print("Use Top1 pred_emb ....")
+                        top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
+                        projector_outs = embed_matrix[top1_ids]                    # [B, T, H]     
+
+                else:
+                    projector_outs = self.encoder_projector(encoder_outs) 
+                    projector_feature_length = encoder_feature_length // self.encoder_projector.k
+                    llm_embedding = self.llm.get_input_embeddings()
+                    embed_matrix = llm_embedding.weight          
+                    ctc_outs = torch.softmax(projector_outs,dim=-1)
+                    projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:projector_outs.size(-1)])
+                    if self.top1_emb:
+                        print("Use Top1 pred_emb ....")
+                        top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
+                        projector_outs = embed_matrix[top1_ids]                    # [B, T, H]     
+        else:
+            print("Use raw feature ...")
+            if self.do_psd:
+                encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
+
+            projector_outs = self.encoder_projector(encoder_outs) 
+            projector_feature_length = encoder_feature_length // self.encoder_projector.k    
+
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
                 projector_outs, projector_feature_length, inputs_embeds, input_ids, attention_mask, labels
             )
-        # print("\n","Before", projector_outs.shape, input_feature_length,encoder_feature_length,projector_feature_length)
-        # exit(1)
+        
         model_outputs = self.llm(inputs_embeds=inputs_embeds, attention_mask=attention_mask, labels=labels,position_ids=position_ids)
         acc = -1
         if self.metric:
@@ -507,62 +607,86 @@ class slam_model_asr(torch.nn.Module):
         # 按官方顺序拼接
         speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1)
         speech_lengths = input_feature_length + 4  # 4 帧前缀
-        # print(speech)
-        # print(speech_lengths)
-        encoder_out, encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
-        if isinstance(encoder_out, tuple):
-            encoder_out = encoder_out[0]
+        
+        raw_encoder_out, raw_encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
+        if isinstance(raw_encoder_out, tuple):
+            raw_encoder_out = raw_encoder_out[0]
 
         # delete formulate output: first 4 tokens
-        encoder_out      = encoder_out[:, 4:, :]          # [B, T-4, D]
-        encoder_out_lens = torch.clamp(encoder_out_lens - 4, min=0)   # [B]
-        # print(f"raw_shape: {encoder_out.shape}")
-        if self.do_psd:
-            print("Do phone synchronize decoding... ")
-            encoder_outs, encoder_feature_length= self.psd(encoder_out, encoder_out_lens, self.encoder.blank_id)
-        else:
-            encoder_outs = encoder_out   
-            encoder_feature_length = encoder_out_lens
-
+        raw_logits = self.encoder.ctc.ctc_lo(raw_encoder_out)
+        raw_ctc_posterior = torch.softmax(raw_logits, dim=-1)
+        ctc_posterior = raw_ctc_posterior[:, 4:, :]
+        encoder_out      = raw_encoder_out[:, 4:, :]          # [B, T-4, D]
+        encoder_out_lens = torch.clamp(raw_encoder_out_lens - 4, min=0)   # [B]
+        
         if self.ctc_posterior:
             print("Use CTC Posterior ...")
-            if self.voca_trans: # don't give prob
-                encoder_outs = encoder_outs
-            else: 
-                encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
-        
-        projector_outs = self.encoder_projector(encoder_outs) 
+            if self.voca_trans == False: 
+                if self.gt_emb:
+                    print("Use Groundtruth Embeddings...")
+                    import re
+                    # 测试阶段清洗
+                    texts = [re.sub(r"[^A-Za-z\s.,!?]+", "", t).lower().strip()   # 注意去掉了 '
+                            for t in targets]
+                    device = input_ids.device
+                    encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
+                    encoder_outs          = encoder_outs.to(device, non_blocking=True)
+                    encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
+                else:
+                    if self.do_psd:
+                        # encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens,self.encoder.blank_id)
+                        # encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+                        encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
+                    else:
+                        encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
+                projector_outs = self.encoder_projector(encoder_outs) 
+                projector_feature_length = encoder_feature_length // self.encoder_projector.k     
 
-        projector_feature_length = encoder_feature_length // self.encoder_projector.k
-        
-        if self.ctc_posterior and self.voca_trans:
-            print("Vocabulary Transform is ready ...")
-            llm_embedding = self.llm.get_input_embeddings()
-            embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
-            V_real = projector_outs.size(-1) - 1
-            logits_no_blank = projector_outs[..., :V_real]            
-            ctc_outs = torch.softmax(logits_no_blank,dim=-1)
-            projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])   
-            if self.top1_emb:
-                # logits_no_blank: [B, T, V_real]   (已去掉 blank)
-                print("Use Top1 pred_emb ....")
-                top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
-                projector_outs = embed_matrix[top1_ids]                    # [B, T, H]  
-        
-        if self.gt_emb:
-            print("Use Groundtruth Embeddings...")
-            import re
-            texts = [re.sub(r"[^A-Za-z\s.,!?']+", "", t).lower().strip() for t in targets]
-            device = input_ids.device
-            encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
-            encoder_outs          = encoder_outs.to(device, non_blocking=True)
-            encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
-            
+            else:
+                print("Vocabulary Transform is ready ...")
+                if self.do_psd: # projector serves as a ctc head
+                    projector_outs = self.encoder_projector(encoder_outs) 
+                    projector_feature_length = encoder_feature_length // self.encoder_projector.k
+                    ctc_posterior = torch.softmax(projector_outs,dim=-1)
+                    projector_outs, projector_feature_length= self.psd(projector_outs, projector_feature_length, ctc_posterior, self.encoder.blank_id)
+                    llm_embedding = self.llm.get_input_embeddings()
+                    embed_matrix = llm_embedding.weight  # [llm_vocab, hidden]
+                    V_real = projector_outs.size(-1) - 1
+                    logits_no_blank = projector_outs[..., :V_real]            
+                    ctc_outs = torch.softmax(logits_no_blank,dim=-1)
+                    projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])
+                    if self.top1_emb:
+                        # logits_no_blank: [B, T, V_real]   (已去掉 blank)
+                        print("Use Top1 pred_emb ....")
+                        top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
+                        projector_outs = embed_matrix[top1_ids]                    # [B, T, H]     
 
+                else:
+                    projector_outs = self.encoder_projector(encoder_outs) 
+                    projector_feature_length = encoder_feature_length // self.encoder_projector.k
+                    llm_embedding = self.llm.get_input_embeddings()
+                    embed_matrix = llm_embedding.weight          
+                    ctc_outs = torch.softmax(projector_outs,dim=-1)
+                    projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:projector_outs.size(-1)])
+                    if self.top1_emb:
+                        print("Use Top1 pred_emb ....")
+                        top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
+                        projector_outs = embed_matrix[top1_ids]                    # [B, T, H]     
+        else:
+            print("Use raw feature ...")
+            if self.do_psd:
+                encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
+            else:
+                encoder_outs, encoder_feature_length = encoder_out, encoder_out_lens
+            projector_outs = self.encoder_projector(encoder_outs) 
+            projector_feature_length = encoder_feature_length // self.encoder_projector.k    
+                
         inputs_embeds = self.llm.get_input_embeddings()(input_ids)
+
         inputs_embeds, attention_mask, labels, position_ids, _ = self._merge_input_ids_with_audio_features(
                 projector_outs, projector_feature_length, inputs_embeds, input_ids, attention_mask, labels
             )
+        
         model_outputs = self.llm.generate(
             inputs_embeds=inputs_embeds,
             max_new_tokens=kwargs.get("max_new_tokens", 200),
@@ -839,4 +963,26 @@ class slam_model_asr(torch.nn.Module):
         #         tokenizer.load(bpe_model_path)
         #         text = tokenizer.decode(token_int)
         #         print()
-    
+def global_mean_var(t, mask=None, unbiased=False):
+    """
+    t: (B, T, D)；mask: (B, T) =1 有效, 0 padding
+    返回: mean (B,), var (B,)
+    """
+    if mask is None:
+        # 直接展平 (B, T*D)
+        mean = t.mean(dim=(1, 2))                        # (B,)
+        var  = t.var(dim=(1, 2), unbiased=unbiased)      # (B,)
+    else:
+        # 只对有效帧做加权平均
+        mask = mask.unsqueeze(-1)                        # (B, T, 1)
+        valid = mask.sum(dim=(1, 2)).clamp(min=1)        # 避免除0
+        mean  = (t * mask).sum(dim=(1, 2)) / valid       # (B,)
+        var   = (((t - mean[:, None, None]) ** 2) * mask).sum(dim=(1,2)) / valid
+    return mean, var
+# inputs_mean, inputs_var = global_mean_var(inputs_embeds, attention_mask)
+        # proj_mean,   proj_var   = global_mean_var(projector_outs)   # 若 projector 也有 mask，可传入
+        # print(f"inputs_mean: {inputs_mean}, inputs_var: {inputs_var}")
+        # print(f"proj_mean: {proj_mean}, proj_var: {proj_var}")
+        # print(f"proj_mean_all: {proj_mean.abs().mean().item()}")
+        # print(f"proj_var_all: {proj_var.abs().mean().item()}")
+        # input()

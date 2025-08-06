@@ -6,9 +6,8 @@ class EncoderProjectorLinear(nn.Module):
         super().__init__()
         self.k = config.encoder_projector_ds_rate
         self.encoder_dim = config.encoder_dim
-        self.llm_vocab = config.llm_dim - 292   # V2
+        self.llm_vocab = config.llm_dim 
 
-        # 一步到位： (encoder_dim * k) → V2
         self.map = nn.Linear(self.encoder_dim * self.k, self.llm_vocab, bias=True)
 
     def forward(self, x):

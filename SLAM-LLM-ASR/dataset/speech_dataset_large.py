@@ -132,8 +132,8 @@ class MultiTaskDataset(IterableDataset):
 
                     if  not self.inference_mode:
                         import re
-                        if re.fullmatch(r"[A-Za-z\s.,!?']+", target):
-                            target = target.lower()
+                        target = re.sub(r"[^A-Za-z\s.,!?']+", "", target).lower().strip()   
+                        
                         target_ids = self.tokenizer.encode(target)
                         target_ids.append(self.tokenizer.eos_token_id)
                         target_ids = torch.tensor(target_ids)
