@@ -21,7 +21,7 @@ train_max_frame_length=2000
 eval_max_frame_length=3000
 multitask_prompt_path=conf/multiprompt.jsonl
 
-projector=linear # simple linear for ctc head, linear is normal type
+projector=simple_linear # simple linear for ctc head, linear is normal type
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
 use_peft=false # For llm
@@ -32,7 +32,7 @@ use_fp16=true
 freeze_encoder=true
 freeze_projector=false
 do_psd=true # whether use psd to ds
-ctc_posterior=false # whether use ctc posterior
+ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 # use absolute path
 deepspeed_config=conf/ds_config.json
@@ -40,7 +40,7 @@ deepspeed_config=conf/ds_config.json
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
-encoder_dim=512 #25055 #512
+encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
