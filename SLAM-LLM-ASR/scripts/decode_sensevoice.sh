@@ -3,41 +3,47 @@ run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
 cd  $run_dir
 code_dir=.
 
-projector=linear #simple_linear
+projector=linear-silu #simple_linear
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt # need to load pretrained ctc head if ctc head is frozen
 
-use_peft=true
+use_peft=false
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250725-2053-librispeech-loratrue_asr_instruct_do_psd_false_ds_5/ps-slm_epoch_5_step_1800
+ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/librispeech-loratrue_asr_instruct_do_psd_true_ds_1_ctc_posterior_true_merge_voca_trans_false_instruction_first/ps-slm_epoch_5_step_1300
 dataset=librispeech
 task=asr
 split=test-other
 
-if [ "$dataset" = "librispeech" ]; then
-    test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
-elif [ "$dataset" = "tts_en_rare_words" ]; then
-    test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/test/${dataset}"
+if [ "$task" = "asr" ]; then
+    if [ "$dataset" = "librispeech" ]; then
+        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
+    elif [ "$dataset" = "gigaspeech" ]; then
+        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
+    elif [ "$dataset" = "slidespeech" ]; then
+        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
+    elif [ "$dataset" = "tts_en_rare_words" ]; then
+        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/test/${dataset}"
+    fi
+elif [ "$task" = "st" ]; then
+    test_scp_file_path="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/"
 fi
 
-# test_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
-encoder_dim=512 #25055 #512
-encoder_projector_ds_rate=5
+encoder_dim=25055 #25055 #512
+encoder_projector_ds_rate=1
 
-do_psd=false # whether use psd to ds
-ctc_posterior=false # whether use ctc posterior
+do_psd=true # whether use psd to ds
+ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 top1_emb=false
 llm_name="Qwen2.5-1.5B-Instruct"
 llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
 llm_dim=1536 #151936 #1536
-
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
-run_decode_device=0 # run decode on certain device
+run_decode_device=5 # run decode on certain device
 decode_log=$ckpt_path/decode_${dataset}_${task}_${split}
 python \
     $code_dir/inference_batch.py \

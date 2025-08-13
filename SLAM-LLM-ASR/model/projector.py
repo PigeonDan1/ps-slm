@@ -1,5 +1,10 @@
 import torch
 import torch.nn as nn
+import math
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+from typing import Optional
 
 class EncoderProjectorLinear(nn.Module):
     def __init__(self, config):
@@ -98,3 +103,57 @@ class EncoderProjectorQFormer(nn.Module):
         query_proj = self.norm(self.linear(query_output.last_hidden_state))
         
         return query_proj
+
+class EncoderProjectorCTCCA(nn.Module):
+    def __init__(self, config, n_heads=8):
+        super().__init__()
+        v1 = config.encoder_dim
+        D = config.llm_dim
+        self.W_q = nn.Linear(v1, D, bias=False)
+        self.n_heads = n_heads
+
+    def forward(self, post, llm_embed):
+        # post: (B, T, V1)
+        B, T, _ = post.shape
+        Q = self.W_q(post)                       # (B, T, D)
+        K = llm_embed                  # (V2, D)
+        V = llm_embed                # (V2, D)
+
+        h = self.n_heads
+        d = Q.size(-1) // h
+        q = Q.view(B, T, h, d)                   # (B, T, h, d)
+        k = K.view(-1, h, d)                     # (V2, h, d)
+        v = V.view(-1, h, d)                     # (V2, h, d)
+
+        scores = torch.einsum('bthd,vhd->bthv', q, k) / d**0.5
+        attn = scores.softmax(dim=-1)
+        z = torch.einsum('bthv,vhd->bthd', attn, v)
+        Z = z.contiguous().view(B, T, -1)        # (B, T, D)
+        return Z
+
+class EncoderProjectorLinearSiLU(nn.Module):
+    def __init__(self, config, bottleneck=1024):
+        """
+        1. 先做 LayerNorm 平衡均值方差
+        2. 用 SiLU (带负泄露) 替代 ReLU
+        3. Bottleneck 降参数量，梯度更易回传
+        """
+        super().__init__()
+        in_dim = config.encoder_dim 
+        out_dim = config.llm_dim
+        self.norm = nn.LayerNorm(in_dim)
+
+        self.ffn = nn.Sequential(
+            nn.Linear(in_dim, bottleneck, bias=True),
+            nn.SiLU(),                      # 比 ReLU 更平滑不截断
+            nn.Linear(bottleneck, out_dim, bias=True),
+        )
+
+        # Kaiming → fan_in，适配 SiLU
+        nn.init.kaiming_uniform_(self.ffn[0].weight, a=math.sqrt(5))
+        nn.init.zeros_(self.ffn[2].bias)
+        self.k = 1
+
+    def forward(self, x):                  # (B,T,in_dim)
+        x = self.norm(x)
+        return self.ffn(x)                 # (B,T,out_dim)

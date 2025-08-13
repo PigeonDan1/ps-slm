@@ -7,7 +7,7 @@ import sys
 import logging
 import types
 from typing import List, Optional, Tuple, Union
-
+import numpy as np
 from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from peft import PeftModel, LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from utils.metric import compute_accuracy
@@ -95,12 +95,23 @@ def setup_encoder_projector(train_config, model_config, **kwargs):
     if model_config.encoder_projector == "linear":
         from model.projector import EncoderProjectorConcat
         encoder_projector = EncoderProjectorConcat(model_config)
+    elif model_config.encoder_projector == "linear-silu":
+        from model.projector import EncoderProjectorLinearSiLU
+        encoder_projector = EncoderProjectorLinearSiLU(model_config)
+        if train_config.freeze_projector:
+            for name, param in encoder_projector.named_parameters(): 
+                param.requires_grad = False
+            encoder_projector.eval()
+            print("Projector is frozen ...")
     elif model_config.encoder_projector == "cov1d-linear":
         from model.projector import EncoderProjectorCov1d
         encoder_projector = EncoderProjectorCov1d(model_config)
     elif model_config.encoder_projector == "q-former":
         from model.projector import EncoderProjectorQFormer
         encoder_projector = EncoderProjectorQFormer(model_config)
+    elif model_config.encoder_projector == "cross-attention":
+        from model.projector import EncoderProjectorCTCCA
+        encoder_projector = EncoderProjectorCTCCA(model_config)
     elif model_config.encoder_projector == "simple_linear":
         from model.projector import EncoderProjectorLinear
         encoder_projector = EncoderProjectorLinear(model_config)
@@ -217,6 +228,41 @@ def model_factory(train_config, model_config, **kwargs):
     )
     return model, tokenizer
 
+import os
+import h5py
+import numpy as np
+
+def append_to_cpu_file(dist_name, tensor, length):
+    """
+    tensor:  [B, T, V]  已 .cpu().half()
+    length:  [B]        已 .cpu()
+    不裁剪 padding，直接整段存
+    """
+    h5_path = '/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/distribution/cpu_cache.h5'
+    print(f"Save {dist_name} distribution ...")
+
+    # 转成 NumPy float16
+    tensor_np = tensor.numpy()
+
+    with h5py.File(h5_path, 'a') as f:
+        # 为每个分布建一个 group
+        grp = f.require_group(dist_name)
+
+        # 当前组内已有样本数 = 下一个索引
+        next_idx = len(grp)
+
+        # 逐样本写入
+        for b in range(tensor_np.shape[0]):
+            ds_name = f'{next_idx + b:08d}'        # 补零方便排序
+            grp.create_dataset(
+                ds_name,
+                data=tensor_np[b],                  # [T, V] 原始形状
+                dtype=np.float16,
+                compression='gzip',                 # 可省 3~5 倍磁盘
+                compression_opts=4
+            )
+            # 把真实长度存为属性
+            grp[ds_name].attrs['length'] = int(length[b])
 
 class slam_model_asr(torch.nn.Module):
     def __init__(
@@ -247,9 +293,14 @@ class slam_model_asr(torch.nn.Module):
         self.do_psd = train_config.do_psd
         self.voca_trans = train_config.voca_trans
         self.gt_emb = train_config.gt_emb
-        if self.gt_emb:
-            from model.tokenizer import SenseVoiceTokenizer
-            self.encoder_tokenizer = SenseVoiceTokenizer(model_config.encoder_path)  
+        self.gt_emb_noise = train_config.gt_emb_noise
+        if model_config.encoder_projector == "cross-attention":
+            self.cross_attn = True
+        else:
+            self.cross_attn = False
+        # if self.gt_emb:
+        from model.tokenizer import SenseVoiceTokenizer
+        self.encoder_tokenizer = SenseVoiceTokenizer(model_config.encoder_path)  
     
         self.top1_emb = train_config.top1_emb
         self.model_config = model_config
@@ -450,6 +501,60 @@ class slam_model_asr(torch.nn.Module):
 
         return posterior, lens
 
+    def ctc_pseudo_posterior_noise(self, texts):
+        """
+        texts: list[str]  —— 已解码文本
+        return:
+            posterior: [B, L_max, vocab_size]  伪后验（已平滑+随机增删）
+            lens:      [B]   每条样本处理后的真实 token 长度
+        """
+        print("Add noise simulation ...")
+        tok = self.encoder_tokenizer
+        vocab_size = tok.vocab_size
+        device = next(self.parameters()).device
+
+        # ---------- 超参 ----------
+        drop_prob   = getattr(self, 'drop_prob',   0.05)          # 丢帧(字符)概率
+        insert_prob = getattr(self, 'insert_prob', 0.0)          # 相对长度插入比例
+        smooth_low  = getattr(self, 'smooth_low',  0.0)           # 平滑 α 范围
+        smooth_high = getattr(self, 'smooth_high', 0.2)
+        blank_id    = self.encoder.blank_id  # 预留 blank
+        # --------------------------
+
+        ids_list = [tok.encode(t) for t in texts]
+        processed = []
+
+        for ids in ids_list:
+            ids_t = torch.tensor(ids, dtype=torch.long)
+            onehot = torch.nn.functional.one_hot(ids_t, vocab_size).float()
+
+            alpha = torch.empty(()).uniform_(smooth_low, smooth_high).item()
+            soft = (1 - alpha) * onehot + alpha / vocab_size
+
+            keep_mask = torch.rand(len(soft)) > drop_prob
+            soft = soft[keep_mask]
+
+            n_insert = int(len(soft) * insert_prob)
+            for _ in range(n_insert):
+                pos = torch.randint(0, len(soft) + 1, (1,)).item()
+                if torch.rand(1) < 0.5 and len(soft) > 0:
+                    dup = soft[pos - 1] if pos > 0 else soft[0]
+                    soft = torch.cat([soft[:pos], dup.unsqueeze(0), soft[pos:]])
+                else:
+                    blank_vec = torch.zeros(vocab_size)
+                    blank_vec[blank_id] = 1.0
+                    soft = torch.cat([soft[:pos], blank_vec.unsqueeze(0), soft[pos:]])
+
+            processed.append(soft)
+
+        lens = torch.tensor([t.size(0) for t in processed], dtype=torch.long, device=device)
+        max_len = lens.max().item()
+        posterior = torch.zeros(len(processed), max_len, vocab_size,
+                                dtype=torch.float32, device=device)
+        for b, t in enumerate(processed):
+            posterior[b, :t.size(0)] = t.to(device)
+        return posterior, lens
+    
     def forward(self,
                 input_ids: torch.LongTensor = None,
                 input_features: Optional[torch.Tensor] = None,
@@ -503,7 +608,10 @@ class slam_model_asr(torch.nn.Module):
                     print("Use Groundtruth Embeddings...")
                     texts = self.ids2text(labels, self.llm) 
                     device = labels.device
-                    encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
+                    if self.gt_emb_noise:
+                        encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior_noise(texts)   # [B, L_max, vocab_size]
+                    else:
+                        encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
                     encoder_outs          = encoder_outs.to(device, non_blocking=True)
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
                 else:
@@ -513,9 +621,16 @@ class slam_model_asr(torch.nn.Module):
                         encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
                     else:
                         encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
-
-                projector_outs = self.encoder_projector(encoder_outs) 
-                projector_feature_length = encoder_feature_length // self.encoder_projector.k     
+                
+                if self.cross_attn:
+                    with torch.no_grad():  
+                        llm_embedding = self.llm.get_input_embeddings().weight
+                    llm_embedding = llm_embedding.detach()
+                    projector_outs = self.encoder_projector(encoder_outs, llm_embedding) 
+                    projector_feature_length = encoder_feature_length
+                else:
+                    projector_outs = self.encoder_projector(encoder_outs) 
+                    projector_feature_length = encoder_feature_length // self.encoder_projector.k     
 
             else:
                 print("Vocabulary Transform is ready ...")
@@ -551,6 +666,8 @@ class slam_model_asr(torch.nn.Module):
             print("Use raw feature ...")
             if self.do_psd:
                 encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
+            else:
+                encoder_outs, encoder_feature_length = encoder_out, encoder_out_lens
 
             projector_outs = self.encoder_projector(encoder_outs) 
             projector_feature_length = encoder_feature_length // self.encoder_projector.k    
@@ -637,10 +754,26 @@ class slam_model_asr(torch.nn.Module):
                         # encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens,self.encoder.blank_id)
                         # encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
                         encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
+                        # append_to_cpu_file('ctc', encoder_outs.cpu().half(), encoder_feature_length.cpu())
+                        # import re
+                        # # 测试阶段清洗
+                        # texts = [re.sub(r"[^A-Za-z\s.,!?]+", "", t).lower().strip()   # 注意去掉了 '
+                        #         for t in targets]
+                        # encoder_outs_1, encoder_feature_length_1 = self.ctc_pseudo_posterior_noise(texts)   # [B, L_max, vocab_size]
+                        # encoder_outs_2, encoder_feature_length_2 = self.ctc_pseudo_posterior(texts) 
+                        # append_to_cpu_file('noise', encoder_outs_1.cpu().half(), encoder_feature_length_1.cpu())
+                        # append_to_cpu_file('clean', encoder_outs_2.cpu().half(), encoder_feature_length_2.cpu())
                     else:
                         encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
-                projector_outs = self.encoder_projector(encoder_outs) 
-                projector_feature_length = encoder_feature_length // self.encoder_projector.k     
+                if self.cross_attn:
+                    with torch.no_grad():  
+                        llm_embedding = self.llm.get_input_embeddings().weight
+                    llm_embedding = llm_embedding.detach()
+                    projector_outs = self.encoder_projector(encoder_outs, llm_embedding) 
+                    projector_feature_length = encoder_feature_length 
+                else:
+                    projector_outs = self.encoder_projector(encoder_outs) 
+                    projector_feature_length = encoder_feature_length // self.encoder_projector.k     
 
             else:
                 print("Vocabulary Transform is ready ...")

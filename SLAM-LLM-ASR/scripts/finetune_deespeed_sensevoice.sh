@@ -13,20 +13,27 @@ export CPU_AFFINITY_CONF=2  # 细粒度绑核
 run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
 cd $run_dir
 code_dir=.
-dataset=librispeech
+dataset=slide_librispeech
 task=asr
-train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
-dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
+if [ "$dataset" = "giga_librispeech" ] || [ "$dataset" = "slide_librispeech" ]; then
+    train_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/${dataset}/train
+    dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/${dataset}/dev
+else
+    train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
+    dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
+fi
+
 train_max_frame_length=2000
 eval_max_frame_length=3000
 multitask_prompt_path=conf/multiprompt.jsonl
 
-projector=simple_linear # simple linear for ctc head, linear is normal type
+projector=linear-silu # simple linear for ctc head, linear is normal type, cross-attention 
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
 use_peft=false # For llm
 use_emb=false # For llm input_embs
-gt_emb=false # whether use gt's emb as input
+gt_emb=true # whether use gt's emb as input
+gt_emb_noise=true # whether use noise
 top1_emb=false # whether use top1's emb as input
 use_fp16=true
 freeze_encoder=true
@@ -50,7 +57,7 @@ model_factory=model/ps-slm.py:model_factory # create your own model_factory
 # prompt_style='<|im_start|>user\\n<speech>{}<|im_end|>\\n<|im_start|>assistant\\n' # audio first
 prompt_fig=instruction_first
 output_dir=${code_dir}/exp/$(date +"%Y%m%d-%H%M")-$dataset-lora${use_peft}_${task}_instruct_do_psd_${do_psd}_ds_${encoder_projector_ds_rate}_ctc_posterior_${ctc_posterior}_voca_trans_${voca_trans}_${prompt_fig}
-
+# ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/20250811-1753-slide_librispeech-lorafalse_asr_instruct_do_psd_true_ds_1_ctc_posterior_true_voca_trans_false_instruction_first/ps-slm_epoch_4_step_1800
 hydra_args="
 hydra.run.dir=$output_dir \
 ++model_config.file=$model_factory \
@@ -80,14 +87,15 @@ hydra.run.dir=$output_dir \
 ++train_config.use_peft=$use_peft \
 ++train_config.use_emb=$use_emb \
 ++train_config.gt_emb=$gt_emb \
+++train_config.gt_emb_noise=$gt_emb_noise \
 ++train_config.top1_emb=$top1_emb \
 ++train_config.batching_strategy=dynamic \
-++train_config.validation_interval=1500 \
+++train_config.validation_interval=1800 \
 ++train_config.num_workers_dataloader=4 \
 ++train_config.output_dir=$output_dir \
 ++metric=acc \
 "
-
+# ++ckpt_path=$ckpt_path/pytorch_model.bin \
 # deepspeed \
 #     --num_nodes 1 \
 #     --num_gpus 2 \

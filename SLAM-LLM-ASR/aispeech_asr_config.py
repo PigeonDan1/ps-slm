@@ -95,7 +95,9 @@ class TrainConfig:
     use_peft:bool = False
     use_emb:bool = False
     gt_emb:bool = False
+    gt_emb_noise:bool = False
     top1_emb:bool = False
+    cross_attn:bool = False
     peft_config:PeftConfig = field(default_factory=PeftConfig)
     output_dir:str = "PATH/to/save/PEFT/model"
     freeze_layers:bool = False
