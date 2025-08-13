@@ -1,0 +1,20 @@
+vc submit -p pdgpu-sjtu-ai -i hub.szaic.com/hpc/ai_asr-jingpeng-ps-slm:v2.0 -c 16 -m 480G -g 8 -n 1 -v /aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/sense_voice_LLM:/workspace -v /aistor/sjtu/hpc_stor01/home/yangyi/model:/models -v /aistor/sjtu/hpc_stor01/home/yangyi/data:/data --cmd "cd /aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/sense_voice_LLM/scripts && bash finetune_deespeed_sensevoice.sh"
+python /aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/SLAM-LLM-ASR-Whisper/utils/wenet_compute_cer.py --char=1 -v=1 sense_voice_LLM/exp/20250810-1107-librispeech-loratrue_asr_instruct_do_psd_false_ds_1_ctc_posterior_true_voca_trans_true_instruction_first/ps-slm_epoch_2_step_1300/decode_librispeech_asr_test-other_gt sense_voice_LLM/exp/20250810-1107-librispeech-loratrue_asr_instruct_do_psd_false_ds_1_ctc_posterior_true_voca_trans_true_instruction_first/ps-slm_epoch_2_step_1300/decode_librispeech_asr_test-other_pred > sense_voice_LLM/exp/20250810-1107-librispeech-loratrue_asr_instruct_do_psd_false_ds_1_ctc_posterior_true_voca_trans_true_instruction_first/ps-slm_epoch_2_step_1300/decode_librispeech_asr_test-other_wer
+
+
+3 3.0 6.84
+3 7.0 7.25
+3 8.0 6.93
+
+4 10.0 7.35
+4 8.0 6.98
+4 7.0 6.86
+4 6.0 7.03
+4 5.0 7.20
+4 4.5 7.40
+4 2.9 7.38
+4 2.5 7.38
+4 1.0 6.26
+
+best-re
+withoutPSD test-clean 2.56 % test-other 6.11 % tts-en 12.81 %

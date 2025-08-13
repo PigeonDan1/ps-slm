@@ -1,0 +1,53 @@
+################### env ###################
+#KUBERNETES_SERVICE_PORT_HTTPS=443
+#KUBERNETES_SERVICE_PORT=443
+#HOSTNAME=job-175504538444709739029-yangyi-master-0
+#NUMEXPR_NUM_THREADS=80
+#MASTER_PORT=23456
+#PWD=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/sense_voice_LLM
+#VC_MASTER_NUM=1
+#GIT_SSL_NO_VERIFY=1
+#ASCEND_VISIBLE_DEVICES=6,7,0,1,2,3,4,5
+#VC_WORKER_HOSTS=
+#TZ=Asia/Shanghai
+#ASCEND_RUNTIME_OPTIONS=
+#OPENBLAS_NUM_THREADS=80
+#WORLD_SIZE=1
+#HOME=/aistor/sjtu/hpc_stor01/home/yangyi
+#KUBERNETES_PORT_443_TCP=tcp://10.96.0.1:443
+#JOB=1
+#LOG_FILE=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/sense_voice_LLM/logs/output_sleeper_JOB.log
+#VC_MASTER_HOSTS=job-175504538444709739029-yangyi-master-0.job-175504538444709739029-yangyi
+#GPU_NUM=8
+#VECLIB_NUM_THREADS=80
+#TOOLCHAIN_HOME=/usr/local/Ascend/ascend-toolkit/latest/toolkit
+#ASCEND_TOOLKIT_HOME=/usr/local/Ascend/ascend-toolkit/latest
+#VC_WORKER_NUM=0
+#MASTER_ADDR=job-175504538444709739029-yangyi-master-0.job-175504538444709739029-yangyi
+#PYTHONPATH=:/usr/local/Ascend/ascend-toolkit/latest/python/site-packages:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe:/usr/local/python3.10.15/lib/python3.10/site-packages:
+#USER=yangyi
+#SHLVL=0
+#KUBERNETES_PORT_443_TCP_PROTO=tcp
+#PARENT_ENV=PATH=/aistor/sjtu/hpc_stor01/home/yangyi/.vscode-server/cli/servers/Stable-e3550cfac4b63ca4eafca7b601f0d2885817fd1f/server/bin/remote-cli:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin:/aistor/sjtu/hpc_stor01/home/yangyi/miniconda3/bin:/aistor/sjtu/hpc_stor01/home/yangyi/miniconda3/condabin:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin:/aistor/sjtu/hpc_stor01/home/yangyi/.vscode-server/extensions/ms-python.debugpy-2025.11.2025072901/bundled/scripts/noConfigScripts:/aistor/sjtu/hpc_stor01/home/yangyi/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin@@PYTHONPATH=@@LD_LIBRARY_PATH=/tmp/_MEIQpXrKm
+#KUBERNETES_PORT_443_TCP_ADDR=10.96.0.1
+#ASCEND_OPP_PATH=/usr/local/Ascend/ascend-toolkit/latest/opp
+#LD_LIBRARY_PATH=/tmp/_MEIQpXrKm:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64:/usr/local/Ascend/ascend-toolkit/latest/tools/aml/lib64/plugin:/usr/local/Ascend/ascend-toolkit/latest/lib64:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/opskernel:/usr/local/Ascend/ascend-toolkit/latest/lib64/plugin/nnengine:/usr/local/Ascend/ascend-toolkit/latest/opp/built-in/op_impl/ai_core/tbe/op_tiling/lib/linux/$(arch):/usr/local/python3.10.15/lib:/usr/local/Ascend/driver/lib64/common:/usr/local/Ascend/driver/lib64/driver:/usr/local/Ascend/add-ons:/usr/local/Ascend/driver/tools/hccn_tool:
+#ASCEND_AICPU_PATH=/usr/local/Ascend/ascend-toolkit/latest
+#RANK=0
+#GPU_PER_TASK=8
+#OMP_NUM_THREADS=80
+#KUBERNETES_SERVICE_HOST=10.96.0.1
+#KUBERNETES_PORT=tcp://10.96.0.1:443
+#KUBERNETES_PORT_443_TCP_PORT=443
+#JobID=job-175504538444709739029-yangyi
+#PATH=/aistor/sjtu/hpc_stor01/home/yangyi/.vscode-server/cli/servers/Stable-e3550cfac4b63ca4eafca7b601f0d2885817fd1f/server/bin/remote-cli:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin:/aistor/sjtu/hpc_stor01/home/yangyi/miniconda3/bin:/aistor/sjtu/hpc_stor01/home/yangyi/miniconda3/condabin:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:/snap/bin:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin:/aistor/sjtu/hpc_stor01/home/yangyi/.vscode-server/extensions/ms-python.debugpy-2025.11.2025072901/bundled/scripts/noConfigScripts:/aistor/sjtu/hpc_stor01/home/yangyi/.vscode-server/data/User/globalStorage/github.copilot-chat/debugCommand:/aistor/sjtu/hpc_stor01/home/yangyi/.local/bin:/usr/local/python3.10.15/bin:/usr/local/python3.10.15/lib/python3.10/site-packages/torch/bin:/usr/local/Ascend/ascend-toolkit/latest/bin:/usr/local/Ascend/ascend-toolkit/latest/compiler/ccec_compiler/bin:/usr/local/Ascend/ascend-toolkit/latest/tools/ccec_compiler/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+#ASCEND_HOME_PATH=/usr/local/Ascend/ascend-toolkit/latest
+#MKL_NUM_THREADS=80
+#DEBIAN_FRONTEND=noninteractive
+#OLDPWD=/workspace
+#_=/usr/bin/env
+################### info ###################
+data now: 2025-08-13 08:37:00
+run on node: szaic-mlops-npu-0006
+###########################################
+
