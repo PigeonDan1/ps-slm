@@ -22,16 +22,19 @@ Audio format support:
 | ark offset | `/xxx/data_wav.1.ark:246511401` | binary `seek(offset)` |
 
 Data examples:
-
+```bash
 {"key": "common_voice_en_211671", "task": "ASR", "target": "That is a weird phrase.", "path": "/data/audio/dev/common_voice_en_211671.wav"}
 
 {"key": "dev_75bc0c09", "task": "SLU_scenario", "target": "news", "path": "/data/slurp/wavs/dev_75bc0c09.wav"}
-
+```
 Tasks supported: ASR, EN2ZH, EN2DE, QA, SLU_scenario (SLURP).  
 (For more tasks, add corresponding prompts in `/conf/multiprompt.jsonl`.)
 
 # 📌 One-Click Script:
+
 Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
+
+Inference script: `/scripts/decode_sensevoice.sh`
 
 ## Core Parameter Explanation
 | Variable | Value | Purpose |
@@ -62,7 +65,6 @@ Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
 | `train_scp_file_path` | `...` | Training file path (directory must contain `multitask.jsonl`) |
 | `dev_scp_file_path` | `...` | Validation file path (directory must contain `multitask.jsonl`) |
 
-Inference script: `/scripts/decode_sensevoice.sh`
 
 </details>
 
