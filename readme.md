@@ -68,37 +68,10 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
    (For more tasks, add corresponding prompts in `/conf/multiprompt.jsonl`.)
 
 3. One-Click Script:
+   
 Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
-Inference script: `/scripts/decode_sensevoice.sh`
-## Core Parameter Explanation
-| Variable | Value | Purpose |
-|---|---|---|
-| `TOKENIZERS_PARALLELISM=false` | Disable HuggingFace tokenizer parallelism | Avoid deadlock |
-| `HCCL_CONNECT_TIMEOUT=7200` | Ascend NCCL timeout 2 h | Large-model comm tolerance |
-| `ASCEND_LAUNCH_BLOCKING=1` | Ascend sync execution | Easier OOM / operator debug |
-| `CPU_AFFINITY_CONF=2` | Fine-grained core binding | Reduce context switch |
-| `OMP_NUM_THREADS=1` | Limit OpenMP threads | Prevent CPU oversubscription |
-| `multitask_prompt_path` | `conf/multiprompt.jsonl` | Prompt templates per task |
-| `llm_path` | `/.../Qwen2.5-1.5B-Instruct` | LLM weight directory |
-| `llm_name` | `Qwen2.5-1.5B-Instruct` | Large-language-model choice |
-| `projector` | `linear-silu` | Projector type |
-| `encoder_dim=25055` | 25055 (SenseVoiceSmall) | Encoder output dimension |
-| `speech_encoder_path` | `/.../SenseVoiceSmall` | Encoder weight directory |
-| `encoder_name` | `sensevoice` | Speech encoder choice |
-| `use_peft` | `false` | Whether to use LoRA fine-tuning |
-| `gt_emb` | `true` | Use text embedding |
-| `gt_emb_noise` | `true` | Smooth GT embedding |
-| `freeze_encoder` | `true` | Freeze encoder |
-| `freeze_projector` | `false` | Freeze projector |
-| `do_psd` | `true` | Enable PSD |
-| `ctc_posterior` | `true` | Use CTC posterior |
-| `voca_trans` | `false` | true = LegoSLM baseline (ctc posterior * llm_emb_matrix) |
-| `use_dynamic_sampling` | `false` | Dynamic sampling (not supported yet) |
-| `validation_interval` | `1000` | Validation interval |
-| `num_epochs` | `5` | Number of training epochs |
-| `train_scp_file_path` | `...` | Training file path (directory must contain `multitask.jsonl`) |
-| `dev_scp_file_path` | `...` | Validation file path (directory must contain `multitask.jsonl`) |
 
+Inference script: `/scripts/decode_sensevoice.sh`
 
 ---
 
