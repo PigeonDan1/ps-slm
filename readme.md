@@ -5,14 +5,6 @@ This repository contains the **core implementation** of the TASU algorithm.
 
 ---
 
-## 🔍 Overview
-
-- **Goal**: Enhance speech semantic *understanding*.
-- **Paradigm**: Text-only alignment–oriented training strategy for Speech LLMs.
-- **This repo**: Implements the key components required to train and evaluate TASU-based Speech LLMs.
-
----
-
 ## ⚙️ Environment Setup
 
 TASU is mainly developed and tested on **Huawei Ascend (910B) NPU clusters**, but can also be adapted to **NVIDIA GPU** environments.
@@ -24,13 +16,7 @@ We primarily run TASU on Huawei Ascend 910B clusters.  You can use the dockerfil
 # Build image from Dockerfile in the current directory
 docker build -t tasu:latest .
 ``` 
-To make it easy to reproduce our experiments, we will also provide a **pre-built container image tarball** (TBD).
 
-1. Obtain the provided image tarball (the `.tar` file linked in your environment).
-2. Load it into your container runtime, for example:
-   ```bash
-   docker load -i <tasu_ascend_image.tar>
-   ``` 
 ## 2. Running on NVIDIA GPUs
 
 For NVIDIA GPU users, you can use the requirements.txt by:
