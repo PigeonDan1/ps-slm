@@ -104,8 +104,8 @@ RUN cd / \
     && git checkout 4ea42a23 \                                                                                                                                                                 
     && chmod -R 777 /MindSpeed \                                                                                                                                                               
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt \                                                                                                          
-    && pip3 install -e .
+    && pip3 install -e . 
 
-RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir torchaudio==2.1.0
-RUN pip install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir -U \
-    transformers accelerate librosa torcheval tensorboardX tensorboard kaldiio whisper hydra-core omegaconf deepspeed fire
+
+RUN cd ps-slm \
+  && pip3 install -r requirements.txt
