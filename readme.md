@@ -23,14 +23,14 @@ We primarily run TASU on Huawei Ascend 910B clusters.  You can use the dockerfil
 ```bash
 # Build image from Dockerfile in the current directory
 docker build -t tasu:latest .
-
+``` 
 To make it easy to reproduce our experiments, we will also provide a **pre-built container image tarball** (TBD).
 
 1. Obtain the provided image tarball (the `.tar` file linked in your environment).
 2. Load it into your container runtime, for example:
    ```bash
    docker load -i <tasu_ascend_image.tar>
-   
+   ``` 
 ## 2. Running on NVIDIA GPUs
 
 For NVIDIA GPU users, you can directly follow the environment setup of the **SLAM-LLM** project:
@@ -56,7 +56,7 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
    git clone https://github.com/PigeonDan1/ps-slm.git
    cd ps-slm
    cd Multitask
-
+   ``` 
 2. Follow the Readme in the dir.
 
 ---
@@ -72,4 +72,4 @@ If you find **TASU** or this codebase useful in your research, please consider c
   journal = {arXiv preprint arXiv:2511.03310},
   year    = {2025},
 }
-
+``` 
