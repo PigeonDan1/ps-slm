@@ -67,11 +67,17 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
    Tasks supported: ASR, EN2ZH, EN2DE, QA, SLU_scenario (SLURP).  
    (For more tasks, add corresponding prompts in `/conf/multiprompt.jsonl`.)
 
-3. One-Click Script:
-   
-Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
+3. Download pre-trained models(huggingFace):
 
-Inference script: `/scripts/decode_sensevoice.sh`
+   SenseVoiceSmall:https://huggingface.co/FunAudioLLM/SenseVoiceSmall
+
+   Qwen2.5-1.5B:https://huggingface.co/Qwen/Qwen2.5-1.5B
+
+4. One-Click Script:
+   
+   Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
+
+   Inference script: `/scripts/decode_sensevoice.sh`
 
 ---
 
