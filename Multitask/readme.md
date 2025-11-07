@@ -64,6 +64,7 @@ Inference script: `/scripts/decode_sensevoice.sh`
 | `num_epochs` | `5` | Number of training epochs |
 | `train_scp_file_path` | `...` | Training file path (directory must contain `multitask.jsonl`) |
 | `dev_scp_file_path` | `...` | Validation file path (directory must contain `multitask.jsonl`) |
+| `ckpt_path` | `pytorch_model.bin` | checkpoint path |
 
 
 </details>
@@ -125,6 +126,7 @@ Inference script: `/scripts/decode_sensevoice.sh`
 | `num_epochs` | `5` | 训练轮数 |
 | `train_scp_file_path` | `...` | 训练文件路径（路径下需要有multitask.jsonl文件）|
 | `dev_scp_file_path` | `...` | 验证文件路径（路径下需要有multitask.jsonl文件）|
+| `ckpt_path` | `pytorch_model.bin` | checkpoint路径 |
 
 推理脚本：/scripts/decode_sensevoice.sh
 
