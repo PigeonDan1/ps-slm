@@ -1,0 +1,29 @@
+model_config:
+  file: model/ps-slm.py:model_factory
+  encoder_projector_ds_rate: 1
+  llm_path: /aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
+  llm_dim: 151936
+  encoder_name: sensevoice
+  encoder_path: /aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
+  encoder_dim: 512
+  encoder_projector: linear
+  ctc_linear: /aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/step_10000.pt
+dataset_config:
+  dataset: librispeech
+  encoder: sensevoice
+  encoder_path: /aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
+  test_scp_file_path: /aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/
+  inference_mode: true
+train_config:
+  model_name: ps-slm
+  device: 3
+  use_peft: false
+  batching_strategy: dynamic
+  num_epochs: 1
+  do_psd: true
+  ctc_posterior: true
+  voca_trans: true
+  num_workers_dataloader: 0
+  output_dir: ''
+decode_log: /decode_librispeech_st_test-clean
+ckpt_path: /pytorch_model.bin

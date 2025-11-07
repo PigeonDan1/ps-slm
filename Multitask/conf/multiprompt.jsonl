@@ -1,0 +1,10 @@
+{"task": "ASR", "prompt": "请识别语音并转写为英文,只生成转写结果:"}
+{"task": "ZH2EN", "prompt": "请识别语音并翻译为英文:"}
+{"task": "EN2ZH", "prompt": "请识别语音并翻译为中文,只生成翻译结果:"}
+{"task": "EN2DE", "prompt": "请识别语音并翻译为德文,只生成翻译结果:"}
+{"task": "prevtext", "prompt": "请识别语音并转写为文字,下面的上文信息可能会提供帮助,{}:"}
+{"task": "hotword", "prompt": "请识别语音并转写为文字,下面的热词可能会提供帮助,{}:"}
+{"task": "QA", "prompt": "请根据语音回答问题,只生成问题结果"}
+{"task": "SLU_scenario","prompt": "请根据语音内容,从以下 18 个场景中选择最匹配的一项,仅返回场景名称:email, play, calendar, general, iot, audio, takeaway, news, qa, weather, datetime, alarm, cooking, recommendation, transport, social, music, lists"}
+{"task": "sentiment","prompt": "请根据语音内容判断,只返回'positive'或者'negative'"}
+{"task": "SLU_action","prompt": "请根据语音内容,从以下 6 个action中选择最匹配的一项,仅返回名称:activate, deactivate, increase, decrease, change language, bring"}
