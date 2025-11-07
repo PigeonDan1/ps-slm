@@ -33,14 +33,11 @@ To make it easy to reproduce our experiments, we will also provide a **pre-built
    ``` 
 ## 2. Running on NVIDIA GPUs
 
-For NVIDIA GPU users, you can directly follow the environment setup of the **SLAM-LLM** project:
+For NVIDIA GPU users, you can use the requirements.txt by:
+```bash
+pip install -r requirements.txt
+```
 
-- SLAM-LLM repo:  
-  https://github.com/X-LANCE/SLAM-LLM
-
-In most cases, you can reuse the same environment and:
-
-- Install packages as described in the SLAM-LLM README.
 - When adapting scripts or configs from the NPU version, replace a small number of `.npu` usages with `.gpu` (e.g., device tags or backend names).
 
 > Full GPU-specific support is under active development, and we plan to provide more detailed GPU setup and scripts soon.
