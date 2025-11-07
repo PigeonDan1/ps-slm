@@ -1,3 +1,5 @@
+# Data Format and Description of Script
+
 <details>
 <summary>📖 English Version</summary>
 
@@ -62,8 +64,10 @@ Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
 
 Inference script: `/scripts/decode_sensevoice.sh`
 
+</details>
+
 <details>
-<summary>📖 English Version</summary>
+<summary>📘 中文版本</summary>
 
 ## 📌 数据格式：
 每条样本是 **一行合法 JSON（JSON Lines）**，字段名与取值约束如下：
@@ -121,3 +125,5 @@ Inference script: `/scripts/decode_sensevoice.sh`
 | `dev_scp_file_path` | `...` | 验证文件路径（路径下需要有multitask.jsonl文件）|
 
 推理脚本：/scripts/decode_sensevoice.sh
+
+</details>
