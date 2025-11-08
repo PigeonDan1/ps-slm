@@ -52,15 +52,15 @@ class PeftConfig:
 
 @dataclass
 class FbankConfig:
-    num_mel_bins: int = 80  # 梅尔频率滤波器组的滤波器数量为80
-    frame_length: int = 25  # 音频帧的长度为25毫秒
-    frame_shift: int = 10  # 帧移为10毫秒
-    dither: float = 0.001  # 抖动系数为0.001
-    window_type: str = "hamming"  # 使用hamming窗口类型
-    use_energy: bool = False  # 不使用能量特征
-    low_freq:int = 0  # 低频截止频率为0Hz
-    high_freq: int = 8000  # 高频截止频率为8000Hz
-    htk_compat: bool = True  # 尝试使其与HTK兼容
+    num_mel_bins: int = 80  
+    frame_length: int = 25  
+    frame_shift: int = 10 
+    dither: float = 0.001 
+    window_type: str = "hamming" 
+    use_energy: bool = False 
+    low_freq:int = 0
+    high_freq: int = 8000  
+    htk_compat: bool = True
 
 
 @dataclass
