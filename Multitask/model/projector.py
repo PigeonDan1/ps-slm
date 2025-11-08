@@ -134,9 +134,9 @@ class EncoderProjectorCTCCA(nn.Module):
 class EncoderProjectorLinearSiLU(nn.Module):
     def __init__(self, config, bottleneck=2048):
         """
-        1. 先做 LayerNorm 平衡均值方差
-        2. 用 SiLU (带负泄露) 替代 ReLU
-        3. Bottleneck 降参数量，梯度更易回传
+        1. First perform LayerNorm to balance the mean and variance
+        2. Replace ReLU with SiLU (with negative leakage)
+        3. Bottleneck
         """
         super().__init__()
         in_dim = config.encoder_dim 
@@ -145,7 +145,7 @@ class EncoderProjectorLinearSiLU(nn.Module):
 
         self.ffn = nn.Sequential(
             nn.Linear(in_dim, bottleneck, bias=True),
-            nn.SiLU(),                      # 比 ReLU 更平滑不截断
+            nn.SiLU(),                      
             nn.Linear(bottleneck, out_dim, bias=True),
         )
 
