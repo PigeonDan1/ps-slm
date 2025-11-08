@@ -9,7 +9,7 @@ export OMP_NUM_THREADS=1
 export TASK_QUEUE_ENABLE=2
 # export ASCEND_LAUNCH_BLOCKING=0
 export ASCEND_LAUNCH_BLOCKING=1
-export CPU_AFFINITY_CONF=2  # 细粒度绑核
+export CPU_AFFINITY_CONF=2  
 run_dir=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/Adaptation
 cd $run_dir
 code_dir=.
@@ -110,7 +110,7 @@ hydra.run.dir=$output_dir \
 #     ${hydra_args}
 
 
-HOST_FILE="/tmp/"${JobID}                        #生成的hostfile的完整文件名，$JobID调度系统会自动生成
+HOST_FILE="/tmp/"${JobID}                        
  
 echo "${VC_MASTER_HOSTS} slots=${GPU_PER_TASK}" > ${HOST_FILE}
 echo "${VC_WORKER_HOSTS}" | awk -F ',' -v gpu_num=$GPU_PER_TASK '{for (i=1; i<=NF; i++) print $i" slots="gpu_num}' >> ${HOST_FILE}
