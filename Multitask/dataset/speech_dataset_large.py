@@ -135,7 +135,6 @@ class MultiTaskDataset(IterableDataset):
 
                         except Exception as e:
                             print(f'[SKIP] key={getattr(self, "key", "unknown")}  ark={ark_path}  err={e}')
-                            # 1. 构造空特征
                             device = next(frontend.parameters()).device if frontend is not None else torch.device('cpu')
                             input_features       = torch.zeros(0, 560, dtype=torch.float32, device=device)
                             input_feature_length = torch.tensor([0], dtype=torch.long, device=device)
@@ -159,11 +158,11 @@ class MultiTaskDataset(IterableDataset):
 
                     if  not self.inference_mode:
                         import re
-                        # 仅对ASR任务进行英文化清洗
+                        # Perform English localization cleaning only for ASR tasks
                         if task == "ASR":  
                             import re
                             target = re.sub(r"[^A-Za-z\s.,!?']+", "", target).lower().strip()
-                        # 翻译/其他任务保留原始文本
+                        # Translation/other tasks retain the original text
                         else:
                             target = target.strip()   
                         
@@ -228,15 +227,15 @@ class MultiTaskDataset(IterableDataset):
     def extract_fbank(self,waveform):
         fbank_features = kaldi.fbank(
             waveform,
-            num_mel_bins=self.dataset_config["fbankConfig"]["num_mel_bins"],  # 梅尔频率滤波器组的滤波器数量
-            frame_length=self.dataset_config["fbankConfig"]["frame_length"],  # 音频帧的长度（毫秒）
-            frame_shift=self.dataset_config["fbankConfig"]["frame_shift"],  # 帧移（毫秒）
-            dither=self.dataset_config["fbankConfig"]["dither"] if self.split == "train" else 0,  # 抖动系数
-            window_type=self.dataset_config["fbankConfig"]["window_type"],  # 窗口类型
-            use_energy=self.dataset_config["fbankConfig"]["use_energy"],  # 是否使用能量特征
-            low_freq=self.dataset_config["fbankConfig"]["low_freq"],  # 低频截止频率（Hz）
-            high_freq=self.dataset_config["fbankConfig"]["high_freq"],  # 高频截止频率（Hz）
-            htk_compat=self.dataset_config["fbankConfig"]["htk_compat"]  # 是否与HTK兼容
+            num_mel_bins=self.dataset_config["fbankConfig"]["num_mel_bins"],  
+            frame_length=self.dataset_config["fbankConfig"]["frame_length"], 
+            frame_shift=self.dataset_config["fbankConfig"]["frame_shift"],  
+            dither=self.dataset_config["fbankConfig"]["dither"] if self.split == "train" else 0, 
+            window_type=self.dataset_config["fbankConfig"]["window_type"],  
+            use_energy=self.dataset_config["fbankConfig"]["use_energy"],
+            low_freq=self.dataset_config["fbankConfig"]["low_freq"],  
+            high_freq=self.dataset_config["fbankConfig"]["high_freq"],
+            htk_compat=self.dataset_config["fbankConfig"]["htk_compat"]  
         )
         return fbank_features
     
