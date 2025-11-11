@@ -13,6 +13,7 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from peft import PeftModel, LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from utils.metric import compute_accuracy
 from utils.config_utils import generate_peft_config
+import h5py
 from utils.model_utils import print_model_size, print_module_size
 from utils.npu_flash_attn import patch_npu_flash_attn
 
@@ -173,10 +174,6 @@ def model_factory(train_config, model_config, **kwargs):
         ),
     )
     return model, tokenizer
-
-import os
-import h5py
-import numpy as np
 
 class slam_model_asr(torch.nn.Module):
     def __init__(
