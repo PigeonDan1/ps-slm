@@ -72,7 +72,7 @@ class JsonlCTCDataset(Dataset):
 
         import soundfile as sf
         sr, wav = kaldiio.load_mat(path)
-        if path.endswith(".wav"):
+        if path.endswith(".wav") or path.endswith(".flac"):
             wav, sr = torchaudio.load(path)
             wav = wav.squeeze(0).numpy()
         else:

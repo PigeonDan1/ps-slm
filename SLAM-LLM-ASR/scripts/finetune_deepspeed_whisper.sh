@@ -7,8 +7,8 @@ export HCCL_CONNECT_TIMEOUT=7200
 export HYDRA_FULL_ERROR=1
 export OMP_NUM_THREADS=1
 export TASK_QUEUE_ENABLE=2
-export ASCEND_LAUNCH_BLOCKING=0
 export CPU_AFFINITY_CONF=2  # 细粒度绑核
+export CUDA_VISIBLE_DEVICES=2
 run_dir=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/project/SLAM-LLM-ASR-Whisper
 cd $run_dir
 code_dir=.

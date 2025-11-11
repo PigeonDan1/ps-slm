@@ -1,25 +1,16 @@
 # 杀干净残留进程
-pkill -9 python && sleep 10
-export MASTER_ADDR=127.0.0.1
-export WORLD_SIZE=8
+# pkill -9 python && sleep 10
+# export MASTER_ADDR=127.0.0.1
+export WORLD_SIZE=2
 # 8 卡 NPU for librispeech, whisper is hot, tokenizer from qwen
-torchrun --nproc_per_node=8 --master_port=29602 train_ddp.py \
-    --jsonl /aistor/aispeech/hpc_stor01/group/asr/english/librispeech/asr/train/multitask.jsonl \
-    --tokenizer_path  /aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct \
+CUDA_VISIBLE_DEVICES=5,6 torchrun --nproc_per_node=2 --master_port=29602 train_ddp.py \
+    --jsonl ../data/librispeech_train.jsonl \
+    --tokenizer_path  /hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/pretrained_models/Qwen2-1.5B-Instruct \
     --batch_size 16 \
-    --epochs 10 \
+    --epochs 20 \
     --encoder_name sensevoice \
-    --encoder_path /aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall \
+    --encoder_path /hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/pretrained_models/SenseVoiceSmall \
     --lr 3e-4 \
-    --save_path ./exp_sensevoice_librispeech_qwen_frozen \
-    --valid_jsonl /aistor/aispeech/hpc_stor01/group/asr/english/librispeech/asr/dev/multitask.jsonl 
+    --save_path ./exp/exp_sensevoice_librispeech_qwen_frozen \
+    --valid_jsonl /hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/data/toy_valid.jsonl
     # --vocab_file /aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/Legoslm/whisper-ctc/vocab/lang_bpe_500.model
-# 8 卡 NPU for aishell1, whisper is frozen, voca is ours
-# torchrun --nproc_per_node=8 --master_port=29601 train_ddp.py \
-#     --jsonl /aistor/aispeech/hpc_stor01/group/asr/mandarin/aishell-1/asr/train/multitask.jsonl \
-#     --batch_size 24 \
-#     --epochs 10 \
-#     --lr 3e-4 \
-#     --save_path ./exp_aishell1_qwen/whisper_ctc_ddp.pt \
-#     --valid_jsonl /aistor/aispeech/hpc_stor01/group/asr/mandarin/aishell-1/asr/dev/multitask.jsonl 
-    # --vocab_file /aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/Legoslm/whisper-ctc/vocab/vocabulary.txt

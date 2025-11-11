@@ -12,7 +12,6 @@ import datetime
 import functools
 import hydra
 import torch
-import torch_npu
 # import torch.npu.nccl as nccl
 import torch.distributed as dist
 from omegaconf import DictConfig
@@ -147,56 +146,19 @@ def train(
 ):
     """
     Trains the model on the given dataloader
-
-    Args:
-        model: The model to be trained
-        train_dataloader: The dataloader containing the training data
-        optimizer: The optimizer used for training
-        lr_scheduler: The learning rate scheduler
-        gradient_accumulation_steps: The number of steps to accumulate gradients before performing a backward/update operation
-        num_epochs: The number of epochs to train for
-        local_rank: The rank of the current node in a distributed setting
-        train_config: The training configuration
-        log_config: The logging configuration
-        eval_dataloader: The dataloader containing the eval data
-        tokenizer: tokenizer used in the eval for decoding the predicitons
-
-    Returns: results dictionary containing average training and validation perplexity and loss
     """
-    # Create a gradient scaler for fp16
     # if train_config.use_fp16 and train_config.enable_fsdp:
     #     scaler = ShardedGradScaler()
     # elif train_config.use_fp16 and not train_config.enable_fsdp:
-    #     scaler = torch.npu.amp.GradScaler()
+    #     scaler = torch.cuda.amp.GradScaler()
     if train_config.enable_ddp:
         world_size = int(os.environ["WORLD_SIZE"])
-    autocast = torch.npu.amp.autocast if train_config.use_fp16 else nullcontext
-    # experimental_config = torch_npu.profiler._ExperimentalConfig(
-    #     export_type=torch_npu.profiler.ExportType.Text,
-    #     profiler_level=torch_npu.profiler.ProfilerLevel.Level1,
-    #     msprof_tx=False,
-    #     aic_metrics=torch_npu.profiler.AiCMetrics.AiCoreNone,
-    #     l2_cache=False,
-    #     op_attr=False,
-    #     data_simplification=False,
-    #     record_op_args=False,
-    #     gc_detect_threshold=None
-    # )
+    else:
+        world_size = 1
 
-    # prof = torch_npu.profiler.profile(
-    #     activities=[
-    #         torch_npu.profiler.ProfilerActivity.CPU,
-    #         torch_npu.profiler.ProfilerActivity.NPU
-    #         ],
-    #     schedule=torch_npu.profiler.schedule(wait=0, warmup=2, active=3, repeat=1, skip_first=10),
-    #     on_trace_ready=torch_npu.profiler.tensorboard_trace_handler("./result"),
-    #     record_shapes=True,
-    #     profile_memory=False,
-    #     with_stack=False,
-    #     with_modules=False,
-    #     with_flops=False,
-    #     experimental_config=experimental_config)
-    # prof.start()
+    # --- NPU autocast -> CUDA autocast ---
+    autocast_cm = torch.cuda.amp.autocast(dtype=torch.bfloat16) if train_config.use_fp16 else nullcontext()
+
     train_prep = []
     train_loss = []
     train_acc = []
@@ -209,6 +171,7 @@ def train(
     best_val_loss = float("inf")
     best_val_acc = 0.0
     total_step = 0
+    data_cnt = 0
     for epoch in range(train_config.num_epochs):
         dist.barrier()
         group_join = dist.new_group(
@@ -216,28 +179,30 @@ def train(
         epoch_start_time = time.perf_counter()
         with MemoryTrace() as memtrace:  # track the memory usage
             model.train()
-            total_loss = torch.tensor(0.0).to(f"npu:{local_rank}")
+            total_loss = torch.tensor(0.0).to(f"cuda:{local_rank}")
             total_acc = 0
             if train_config.batching_strategy != "dynamic":
                 total_length = len(train_dataloader)//gradient_accumulation_steps
                 pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", total=total_length, dynamic_ncols=True)
             else:
-                pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", dynamic_ncols=True)
+                total_length = len(train_dataloader)//(gradient_accumulation_steps*world_size)
+                pbar = tqdm(colour="blue", desc=f"Training Epoch: {epoch+1}", total=total_length, dynamic_ncols=True)
             for step, batch in enumerate(train_dataloader):
                 if train_config.batching_strategy == "dynamic" and deepspeed_join(group_join):
                     break
+                assert "input_ids" in batch.keys()
                 for key in batch.keys():
                     batch[key] = (
-                        batch[key].to(f"npu:{local_rank}").half()
+                        batch[key].to(f"cuda:{local_rank}").half()
                         if isinstance(batch[key], torch.Tensor)
                         and batch[key].dtype == torch.float32
                         else (
-                            batch[key].to(f"npu:{local_rank}")
+                            batch[key].to(f"cuda:{local_rank}")
                             if isinstance(batch[key], torch.Tensor)
                             else batch[key]
                         )
                     )
-                with autocast(dtype=torch.bfloat16):
+                with autocast_cm:
                     outputs, *rest = model(**batch)
                 acc = rest[0] if rest else -1
                 loss = outputs.loss
@@ -269,12 +234,15 @@ def train(
                 # deepspeed should handle gradient accumulate
                 model.backward(loss)
                 model.step()
-                # prof.step()
-                if (step + 1) % gradient_accumulation_steps == 0 :
-                    pbar.update(1)
+                if train_config.batching_strategy != 'dynamic':
+                    if (step + 1) % gradient_accumulation_steps == 0 :
+                        pbar.update(1)
+                else:
+                    pbar.update(batch["input_ids"].shape[0])
 
+                data_cnt += batch["input_ids"].shape[0]
                 pbar.set_description(
-                    f"Training Epoch: {epoch+1}/{train_config.num_epochs}, step {step}/{len(train_dataloader)  if train_config.batching_strategy != 'dynamic' else ''} completed (loss: {loss.detach().float()}, acc: {acc})"
+                    f"Training Epoch: {epoch+1}/{train_config.num_epochs}, {step if train_config.batching_strategy != 'dynamic' else data_cnt}/{len(train_dataloader)/world_size} completed (loss: {loss.detach().float()}, acc: {acc})"
                 )
 
                 if ( step + 1) % train_config.validation_interval == 0 and train_config.run_validation:
@@ -330,7 +298,7 @@ def train(
                         logger.info(
                             f"Test the file {train_config.run_test_during_validation_file} during validation:"
                         )
-                        with autocast():
+                        with autocast_cm:
                             logger.info(
                                 model.inference(
                                     train_config.run_test_during_validation_file,
@@ -340,15 +308,14 @@ def train(
                         logger.info("=====================================")
                     dist.barrier()
             pbar.close()
-        # prof.stop()
         dist.destroy_process_group(group_join)
 
         total_step += (step + 1)
 
         epoch_end_time = time.perf_counter() - epoch_start_time
         epoch_times.append(epoch_end_time)
-        # Reducing total_loss across all devices if there's more than one npu device
-        if torch.npu.device_count() > 1 and (
+        # Reducing total_loss across all devices if there's more than one cuda device
+        if torch.cuda.device_count() > 1 and (
             train_config.enable_fsdp or train_config.enable_ddp
         ):
             dist.all_reduce(total_loss, op=dist.ReduceOp.SUM)
@@ -389,16 +356,13 @@ def train(
             )
 
         if rank == 0:
-            logger.info(f"Max npu memory allocated was {memtrace.peak} GB")
-            logger.info(f"Max npu memory reserved was {memtrace.max_reserved} GB")
-            logger.info(f"Peak active npu memory was {memtrace.peak_active_gb} GB")
-            logger.info(f"npu Malloc retires : {memtrace.npu_malloc_retires}")
+            logger.info(f"Max cuda memory allocated was {memtrace.peak} GB")
+            logger.info(f"Max cuda memory reserved was {memtrace.max_reserved} GB")
+            logger.info(f"Peak active cuda memory was {memtrace.peak_active_gb} GB")
+            logger.info(f"cuda Malloc retires : {memtrace.npu_malloc_retires}")
             logger.info(
                 f"CPU Total Peak Memory consumed during the train (max): {memtrace.cpu_peaked + memtrace.cpu_begin} GB"
             )
-
-        # Update the learning rate as needed
-        # lr_scheduler.step()
 
     avg_epoch_time = sum(epoch_times) / len(epoch_times)
     avg_checkpoint_time = (
@@ -424,91 +388,114 @@ def train(
     results["avg_epoch_time"] = avg_epoch_time
     results["avg_checkpoint_time"] = avg_checkpoint_time
 
-    # saving the training params including fsdp setting for reference.
-    # if (train_config.enable_fsdp or train_config.enable_ddp)and not train_config.use_peft:
-    #     save_train_params(train_config, fsdp_config, rank)
-
     return results
 
 
 def evaluation(model, train_config, eval_dataloader, local_rank, tokenizer):
     """
     Evaluates the model on the given dataloader
-
-    Args:
-        model: The model to evaluate
-        eval_dataloader: The dataloader containing the evaluation data
-        local_rank: The rank of the current node in a distributed setting
-        tokenizer: The tokenizer used to decode predictions
-
-    Returns: eval_ppl, eval_epoch_loss
     """
+    import math
     world_size = int(os.environ["WORLD_SIZE"])
+    device = torch.device(f"cuda:{local_rank}")
+
     model.eval()
     eval_preds = []
-    eval_loss = 0.0  # Initialize evaluation loss
-    eval_acc = 0.0
-    autocast = (
-        torch.npu.amp.autocast if train_config.use_fp16 else nullcontext
-    )  # (Fix:MZY): fix expected scalar type mismatch in norm
 
+    eval_loss = torch.zeros(1, device=device)
+    eval_acc = torch.zeros(1, device=device)
+
+    autocast_cm = (
+        torch.cuda.amp.autocast(dtype=torch.bfloat16)
+        if train_config.use_fp16
+        else nullcontext()
+    )
+
+    tot_step = 0
     with MemoryTrace() as memtrace:
         if train_config.batching_strategy != "dynamic":
             total_length = len(eval_dataloader)
-            pbar = tqdm(colour="green", desc=f"Evaluating Epoch", total=total_length, dynamic_ncols=True)
+            pbar = tqdm(
+                colour="green",
+                desc="Evaluating Epoch",
+                total=total_length,
+                dynamic_ncols=True,
+            )
         else:
-            pbar = tqdm(colour="green", desc=f"Evaluating Epoch",  dynamic_ncols=True)
+            pbar = tqdm(
+                colour="green",
+                desc="Evaluating Epoch",
+                dynamic_ncols=True,
+            )
+
         for step, batch in enumerate(eval_dataloader):
             for key in batch.keys():
-                batch[key] = (
-                    batch[key].to(f"npu:{local_rank}").half()
-                    if isinstance(batch[key], torch.Tensor) and batch[key].dtype==torch.float32
-                    else (
-                        batch[key].to(f"npu:{local_rank}") if isinstance(batch[key], torch.Tensor) else batch[key]
-                    )
-                )
-            # Ensure no gradients are computed for this scope to save memory
+                if isinstance(batch[key], torch.Tensor):
+                    if batch[key].dtype == torch.float32:
+                        batch[key] = batch[key].to(device).half()
+                    else:
+                        batch[key] = batch[key].to(device)
+
             with torch.no_grad():
-                # Forward pass and compute loss
-                with autocast(dtype=torch.bfloat16):  # (Fix:MZY): fix expected scalar type mismatch in norm
+                with autocast_cm:
                     outputs, *rest = model(**batch)
-                acc = rest[0] if rest else -1
+
                 loss = outputs.loss
 
+                if rest:
+                    acc_val = rest[0]
+                    if not isinstance(acc_val, torch.Tensor):
+                        acc_val = torch.tensor(acc_val, device=device, dtype=torch.float32)
+                    else:
+                        acc_val = acc_val.to(device=device, dtype=torch.float32)
+                else:
+                    acc_val = torch.tensor(-1.0, device=device, dtype=torch.float32)
+
                 eval_loss += loss.detach().float()
-                eval_acc += acc
-            # Decode predictions and add to evaluation predictions list
+                eval_acc += acc_val
+
             preds = torch.argmax(outputs.logits, -1)
             eval_preds.extend(
                 tokenizer.batch_decode(
-                    preds.detach().cpu().numpy(), skip_special_tokens=True
+                    preds.detach().cpu().numpy(),
+                    skip_special_tokens=True,
                 )
             )
+
+            cur_loss = (eval_loss / (step + 1)).item()
+            cur_acc = (eval_acc / (step + 1)).item()
+
             pbar.update(1)
             pbar.set_description(
-                f"step: {step+1}/{total_length if train_config.batching_strategy != 'dynamic' else '' }, eval_loss: {eval_loss/(step+1):.4f}, eval_acc: {eval_acc/(step+1):.4f}"
+                f"step: {step+1}/{total_length if train_config.batching_strategy != 'dynamic' else '' }, "
+                f"eval_loss: {cur_loss:.4f}, eval_acc: {cur_acc:.4f}"
             )
+            tot_step = step + 1
 
-    # If there's more than one npu device, reduce evaluation loss across all devices
-    if (
-        torch.npu.device_count() > 1
-    ):
+    if torch.cuda.device_count() > 1:
         dist.all_reduce(eval_loss, op=dist.ReduceOp.SUM)
         dist.all_reduce(eval_acc, op=dist.ReduceOp.SUM)
 
-    # Compute average loss and perplexity
-    eval_epoch_loss = eval_loss / (len(eval_dataloader) if train_config.batching_strategy != "dynamic" else step + 1)
-    eval_epoch_acc = eval_acc / (len(eval_dataloader) if train_config.batching_strategy != "dynamic" else step + 1)
-    eval_epoch_loss = eval_epoch_loss / world_size
-    eval_epoch_acc = eval_epoch_acc / world_size
-    eval_ppl = torch.exp(eval_epoch_loss)
+    num_steps = (len(eval_dataloader)
+                 if train_config.batching_strategy != "dynamic"
+                 else (tot_step + 1))
 
-    # Print evaluation metrics
+
+    eval_epoch_loss = (eval_loss / num_steps) / world_size  
+    eval_epoch_acc = (eval_acc / num_steps) / world_size
+
+    eval_ppl = torch.exp(eval_epoch_loss).item()
+    eval_epoch_loss_val = eval_epoch_loss.item()
+    eval_epoch_acc_val = eval_epoch_acc.item()
+
     if local_rank == 0:
-        logger.info(f" {eval_ppl=} {eval_epoch_loss=} {eval_epoch_acc=}")
+        logger.info(
+            f" eval_ppl={eval_ppl} eval_epoch_loss={eval_epoch_loss_val} eval_epoch_acc={eval_epoch_acc_val}"
+        )
 
     model.train()
-    return eval_ppl, eval_epoch_loss, eval_epoch_acc
+
+    return eval_ppl, eval_epoch_loss_val, eval_epoch_acc_val
 
 
 def freeze_transformer_layers(model, num_layer):
@@ -528,17 +515,17 @@ def check_frozen_layers_peft_model(model):
 
 def setup():
     """Initialize the process group for distributed training"""
-    dist.init_process_group("hccl")
+    # --- HCCL -> NCCL ---
+    dist.init_process_group("nccl")
 
 
 def setup_environ_flags(rank):
     """Set environment flags for debugging purposes"""
     os.environ["TORCH_SHOW_CPP_STACKTRACES"] = str(1)
-    os.environ["HCCL_ASYNC_ERROR_HANDLING"] = str(1)
+    # --- HCCL -> NCCL ---
+    os.environ["NCCL_ASYNC_ERROR_HANDLING"] = str(1)
     # os.environ["TORCH_DISTRIBUTED_DEBUG"] = "DETAIL"
-    # This flag will help with npu memory fragmentations that can lead into OOM in some cases.
-    # Note this is only availble in PyTorch Nighlies (as of July 30 2023)
-    # os.environ['PYTORCH_npu_ALLOC_CONF']='expandable_segments:True'
+    # This flag will help with cuda memory fragmentations that can lead into OOM in some cases.
     if rank == 0:
         logger.info(f"--> Running with torch dist debug set to detail")
 
@@ -552,7 +539,8 @@ def clear_gpu_cache(rank=None):
     """Clear the GPU cache for all ranks"""
     if rank == 0:
         logger.info(f"Clearing GPU cache for all ranks")
-    torch.npu.empty_cache()
+    # --- torch.npu.empty_cache() -> cuda ---
+    torch.cuda.empty_cache()
 
 
 def get_parameter_dtypes(model):
@@ -566,13 +554,6 @@ def get_parameter_dtypes(model):
 def print_model_size(model, config, rank: int = 0) -> None:
     """
     log model name, the number of trainable parameters and initialization time.
-
-    Args:
-        model: The PyTorch model.
-        model_name (str): Name of the model.
-        init_time_start (float): Initialization start time.
-        init_time_end (float): Initialization end time.
-        rank (int, optional): Current process's rank. Defaults to 0.
     """
     if rank == 0:
         logger.info(f"--> Model {config.model_name}")
@@ -585,11 +566,6 @@ def print_model_size(model, config, rank: int = 0) -> None:
 def print_module_size(module, module_name, rank: int = 0) -> None:
     """
     Print module name, the number of trainable parameters and initialization time.
-
-    Args:
-        module: The PyTorch module.
-        module_name (str): Name of the model.
-        rank (int, optional): Current process's rank. Defaults to 0.
     """
     if rank == 0:
         logger.info(f"--> Module {module_name}")
@@ -600,20 +576,14 @@ def print_module_size(module, module_name, rank: int = 0) -> None:
 def save_train_params(train_config, fsdp_config, rank):
     """
     This function saves the train_config and FSDP config into a train_params.yaml.
-    This will be used by converter script in the inference folder to fetch the HF model name or path.
-    It also would be hepful as a log for future references.
     """
-    # Convert the train_config and fsdp_config objects to dictionaries,
-    # converting all values to strings to ensure they can be serialized into a YAML file
     train_config_dict = {
         k: str(v) for k, v in vars(train_config).items() if not k.startswith("__")
     }
     fsdp_config_dict = {
         k: str(v) for k, v in vars(fsdp_config).items() if not k.startswith("__")
     }
-    # Merge the two dictionaries into one
     train_params_dict = {**train_config_dict, **fsdp_config_dict}
-    # Construct the folder name (follwoing FSDP checkpointing style) using properties of the train_config object
     folder_name = (
         train_config.dist_checkpoint_root_folder
         + "/"
@@ -623,18 +593,14 @@ def save_train_params(train_config, fsdp_config, rank):
     )
 
     save_dir = Path.cwd() / folder_name
-    # If the directory does not exist, create it
     if not os.path.exists(save_dir):
         os.makedirs(save_dir)
-    # Convert the dictionary to a YAML string
     config_yaml = yaml.dump(train_params_dict, indent=4)
     file_name = os.path.join(save_dir, "train_params.yaml")
 
-    # Check if there's a directory with the same name as the file
     if os.path.isdir(file_name):
         logger.info(f"Error: {file_name} is a directory, not a file.")
     else:
-        # Write the YAML string to the file
         with open(file_name, "w") as f:
             f.write(config_yaml)
         if rank == 0:

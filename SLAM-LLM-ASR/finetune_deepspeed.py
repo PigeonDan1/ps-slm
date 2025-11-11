@@ -3,15 +3,10 @@ import os
 import logging
 import random 
 from dataclasses import dataclass, field
-import torch_npu
-torch_npu.npu.set_compile_mode(jit_compile=False)
-torch_npu.npu.config.allow_internal_format = False
-
 from omegaconf import DictConfig, OmegaConf
 import wandb
 import deepspeed
 import torch
-import torch_npu
 from functools import partial
 from dataset.speech_dataset_large import MultiTaskDynamicBatchDataset,MultiTaskDataset,window_class
 from aispeech_asr_config import ModelConfig, TrainConfig, DataConfig, LogConfig, FSDPConfig
@@ -100,8 +95,9 @@ def main(kwargs: DictConfig):
 
 
     # Set the seeds for reproducibility
-    torch.npu.manual_seed(train_config.seed)
     torch.manual_seed(train_config.seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(train_config.seed)
     random.seed(train_config.seed)
 
     local_rank = int(os.environ["LOCAL_RANK"])
@@ -109,7 +105,8 @@ def main(kwargs: DictConfig):
     world_size = int(os.environ["WORLD_SIZE"])
     logger.info(f"local_rank: {local_rank}, rank: {rank}, world_size: {world_size}")
 
-    torch.npu.set_device(local_rank)
+    # --- NPU -> GPU ---
+    torch.cuda.set_device(local_rank)
     clear_gpu_cache(local_rank)
     setup_environ_flags(rank)
 
@@ -130,7 +127,7 @@ def main(kwargs: DictConfig):
     model_factory = get_custom_model_factory(model_config, logger) # pj: we can implace our own method here for creating other recipes
     model, tokenizer = model_factory(train_config, model_config, **kwargs)
     parameters = filter(lambda p: p.requires_grad, model.parameters())
-    device = torch.device("npu" if torch.npu.is_available() else "cpu")
+    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # If you are facing problem from limited memory(<=256GB), you can try to replace the above code with the following code
     # for i in range(rank):
@@ -140,7 +137,7 @@ def main(kwargs: DictConfig):
     # model_factory = get_custom_model_factory(model_config, logger)
     # model, tokenizer = model_factory(train_config, model_config, **kwargs)
     # parameters = filter(lambda p: p.requires_grad, model.parameters())
-    # device = torch.device("npu" if torch.npu.is_available() else "cpu")
+    # device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     # model.half()
     # with open(f".{rank}.done", "w"):
     #     pass
@@ -158,7 +155,7 @@ def main(kwargs: DictConfig):
 
     #setting up FSDP if enable_fsdp is enabled
     # if train_config.enable_ddp:
-    #     model = model.npu(local_rank)
+    #     model = model.cuda(local_rank)
     #     model = DDP(model, device_ids=[local_rank],
     #                 find_unused_parameters=kwargs.get("train_conf", {}).get("find_unused_parameters", False))
     # elif not train_config.quantization:

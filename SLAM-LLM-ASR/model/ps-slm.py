@@ -13,7 +13,8 @@ from peft import PeftModel, LoraConfig, TaskType, get_peft_model, prepare_model_
 from utils.metric import compute_accuracy
 from utils.config_utils import generate_peft_config
 from utils.model_utils import print_model_size, print_module_size
-from utils.npu_flash_attn import patch_npu_flash_attn
+# from utils.npu_flash_attn import patch_npu_flash_attn
+
 
 logger = logging.getLogger(__name__)
 def ctc_greedy_search(
@@ -210,7 +211,7 @@ def model_factory(train_config, model_config, **kwargs):
         model_config,
         **kwargs,
     )
-    patch_npu_flash_attn()
+    # patch_npu_flash_attn()
     ckpt_path = kwargs.get( "ckpt_path", None)
     if ckpt_path is not None:
         logger.info("loading other parts from: {}".format(ckpt_path))
@@ -587,12 +588,14 @@ class slam_model_asr(torch.nn.Module):
         ).repeat(B, 1, 1)  # [B, 2, d_model]
 
         # 按官方顺序拼接
-        speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1)
+        speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1) 
         speech_lengths = input_feature_length + 4  # 4 帧前缀
-        
+
         raw_encoder_out, raw_encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
+
         if isinstance(raw_encoder_out, tuple):
             raw_encoder_out = raw_encoder_out[0]
+
 
         # delete formulate output: first 4 tokens
         raw_logits = self.encoder.ctc.ctc_lo(raw_encoder_out)

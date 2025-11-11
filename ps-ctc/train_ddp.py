@@ -1,4 +1,4 @@
-import os, argparse, torch, torch_npu
+import os, argparse, torch
 import torch.distributed as dist
 import torch.multiprocessing as mp
 from torch.nn.parallel import DistributedDataParallel as DDP
@@ -48,7 +48,7 @@ def train(rank, world_size, args):
     setup(rank, world_size)
     print("Here is the arguments: ")
     print(args)
-    print("Check possible probelms !!!")
+    # print("Check possible probelms !!!")
     # 决定当前进程绑定的设备
     if torch.cuda.is_available():
         device = torch.device(f"cuda:{rank}")
@@ -202,7 +202,7 @@ def main():
     parser.add_argument("--encoder_name", default="whisper")
     parser.add_argument("--encoder_path", default="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/model/openai-mirror/whisper-medium")
     parser.add_argument("--valid_jsonl", required=True)
-    parser.add_argument("--eval_steps", type=int, default=1000, help="Run eval/save every N steps")
+    parser.add_argument("--eval_steps", type=int, default=10000, help="Run eval/save every N steps")
     parser.add_argument("--vocab_file", default=None, help="Path to vocab.txt. If set, will override tokenizer.")
 
     args = parser.parse_args()

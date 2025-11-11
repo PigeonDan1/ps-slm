@@ -55,6 +55,18 @@ class MultiTaskDataset(IterableDataset):
         self.kwargs = kwargs
         del encoder # without memory waste
 
+    def __len__(self):
+        # for big files
+        def count_lines(path):
+            cnt = 0
+            with open(path, "r", encoding="utf-8") as f:
+                for _ in f:
+                    cnt += 1
+            return cnt
+        multitask_task_path = os.path.join(self.data_path, "multitask.jsonl")
+        datalen = count_lines(multitask_task_path)
+        return datalen
+
     def __iter__(self):
         multitask_task_path = os.path.join(self.data_path,"multitask.jsonl")
         worker_info = torch.utils.data.get_worker_info()
@@ -292,6 +304,8 @@ class MultiTaskDynamicBatchDataset(IterableDataset):
             yield self._buffer
         del self._buffer
         self._buffer = []
+    def __len__(self):
+        return len(self.dp)
          
     
 def window_class(elem,buffer,max_frame_length,ds_rate):

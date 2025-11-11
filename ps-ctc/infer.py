@@ -1,7 +1,6 @@
 import argparse
 import os
 import torch
-import torch_npu
 from torch.utils.data import DataLoader
 from transformers import AutoTokenizer, WhisperFeatureExtractor
 from dataset import JsonlCTCDataset, ctc_collate_fn, Vocabulary, KaldiFbankExtractor

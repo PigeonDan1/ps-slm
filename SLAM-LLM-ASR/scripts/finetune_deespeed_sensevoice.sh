@@ -8,22 +8,24 @@ export HYDRA_FULL_ERROR=1
 export OMP_NUM_THREADS=1
 export TASK_QUEUE_ENABLE=2
 # export ASCEND_LAUNCH_BLOCKING=0
-export ASCEND_LAUNCH_BLOCKING=1
+# export ASCEND_LAUNCH_BLOCKING=1
 export CPU_AFFINITY_CONF=2  # 细粒度绑核
-run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
+export MASTER_ADDR=127.0.0.1
+run_dir=/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/SLAM-LLM-ASR
 cd $run_dir
 code_dir=.
 dataset=slide_librispeech
 task=asr
-if [ "$dataset" = "giga_librispeech" ] || [ "$dataset" = "slide_librispeech" ]; then
-    train_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/${dataset}/train
-    dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/${dataset}/dev
-else
-    train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
-    dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
-fi
-
-train_max_frame_length=2000
+# if [ "$dataset" = "giga_librispeech" ] || [ "$dataset" = "slide_librispeech" ]; then
+#     train_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/${dataset}/train
+#     dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/${dataset}/dev
+# else
+#     train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
+#     dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
+# fi
+train_scp_file_path=/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/data/librispeech_asr/train
+dev_scp_file_path=/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/data/librispeech_asr/dev
+train_max_frame_length=3000
 eval_max_frame_length=3000
 multitask_prompt_path=conf/multiprompt.jsonl
 
@@ -35,23 +37,23 @@ use_emb=false # For llm input_embs
 gt_emb=true # whether use gt's emb as input
 gt_emb_noise=true # whether use noise
 top1_emb=false # whether use top1's emb as input
-use_fp16=true
+use_fp16=false
 freeze_encoder=true
 freeze_projector=false
 do_psd=true # whether use psd to ds
 ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 # use absolute path
-deepspeed_config=conf/ds_config.json
+deepspeed_config=/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/SLAM-LLM-ASR/conf/ds_config.json
 
 # Choose Encoder
 encoder_name=sensevoice
-speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
+speech_encoder_path=/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/pretrained_models/SenseVoiceSmall
 encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
-llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
+llm_path=/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/pretrained_models/Qwen2-1.5B-Instruct
 llm_dim=1536 #151936 # 1536
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
 # prompt_style='<|im_start|>user\\n<speech>{}<|im_end|>\\n<|im_start|>assistant\\n' # audio first
@@ -90,7 +92,7 @@ hydra.run.dir=$output_dir \
 ++train_config.gt_emb_noise=$gt_emb_noise \
 ++train_config.top1_emb=$top1_emb \
 ++train_config.batching_strategy=dynamic \
-++train_config.validation_interval=1800 \
+++train_config.validation_interval=10000 \
 ++train_config.num_workers_dataloader=4 \
 ++train_config.output_dir=$output_dir \
 ++metric=acc \
@@ -112,12 +114,8 @@ HOST_FILE="/tmp/"${JobID}                        #生成的hostfile的完整文�
 echo "${VC_MASTER_HOSTS} slots=${GPU_PER_TASK}" > ${HOST_FILE}
 echo "${VC_WORKER_HOSTS}" | awk -F ',' -v gpu_num=$GPU_PER_TASK '{for (i=1; i<=NF; i++) print $i" slots="gpu_num}' >> ${HOST_FILE}
 
+
 deepspeed \
-    --node_rank=$RANK \
-    --master_addr $MASTER_ADDR \
-    --master_port $MASTER_PORT \
-    --hostfile $HOST_FILE \
-    --no_ssh \
     $code_dir/finetune_deepspeed.py \
     ++train_config.enable_fsdp=false \
     ++train_config.enable_ddp=true \

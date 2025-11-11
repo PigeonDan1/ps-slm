@@ -8,7 +8,6 @@ import logging
 from dataclasses import dataclass, field
 
 import torch
-import torch_npu
 from omegaconf import DictConfig, ListConfig, OmegaConf
 from tqdm import tqdm
 
