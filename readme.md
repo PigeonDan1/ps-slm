@@ -68,7 +68,7 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
 
    ckpts:https://huggingface.co/yyy1421129/ps-slm https://www.modelscope.cn/models/yyy1421129/ps-slm
     - text_only: Checkpoint trained with only text
-    - half_audio_finetuned: SFT using 900h audio based on text_only.bin
+    - half_audio_finetuned: SFT using 900h audio based on text_only/pytorch_model.bin
     - Method to use these ckpts: Download and Fill in the ckpt_path variable in scripts scripts/decode_sensevoice.sh with the path to the downloaded model checkpoint.
    
 5. One-Click Script:
