@@ -338,8 +338,6 @@ class slam_model_asr(torch.nn.Module):
         )
         return text_list
 
-    import torch
-
     def ctc_pseudo_posterior(self, texts):
         """
         texts: list[str]  —— Decoded text
@@ -380,7 +378,7 @@ class slam_model_asr(torch.nn.Module):
         vocab_size = tok.vocab_size
         device = next(self.parameters()).device
 
-        # ---------- 超参 ----------
+        # ---------- parameters ----------
         drop_prob   = getattr(self, 'drop_prob',   0.05)          # drop probability
         insert_prob = getattr(self, 'insert_prob', 0.0)          # Relative length insertion ratio
         smooth_low  = getattr(self, 'smooth_low',  0.0)           # α range
