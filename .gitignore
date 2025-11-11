@@ -3,5 +3,8 @@ ps-ctc/
 pretrained_models/
 readme.md
 data/
-
-
+*/__pycache__/
+*/*/__pycache__/
+SLAM-LLM-ASR/distribution/
+*/exp/
+*/tmp/
