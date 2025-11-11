@@ -60,13 +60,18 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
    Tasks supported: ASR, EN2ZH, EN2DE, QA, SLU_scenario (SLURP).  
    (For more tasks, add corresponding prompts in `/conf/multiprompt.jsonl`.)
 
-3. Download pre-trained models(huggingFace):
+3. Download pre-trained models and our checkpoints(huggingFace):
 
    SenseVoiceSmall:https://huggingface.co/FunAudioLLM/SenseVoiceSmall
 
    Qwen2.5-1.5B:https://huggingface.co/Qwen/Qwen2.5-1.5B
 
-4. One-Click Script:
+   ckpts:https://huggingface.co/yyy1421129/ps-slm https://www.modelscope.cn/models/yyy1421129/ps-slm
+    - text_only.bin: Checkpoint trained with only text
+    - half_audio_finetuned.bin: SFT using 900h audio based on text_only.bin
+    - Method to use these ckpts: Download and Fill in the ckpt_path variable in scripts scripts/decode_sensevoice.sh with the path to the downloaded model checkpoint.
+   
+5. One-Click Script:
    
    Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
 
