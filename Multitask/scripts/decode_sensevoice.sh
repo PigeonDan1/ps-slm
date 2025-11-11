@@ -87,7 +87,7 @@ python \
     ++train_config.num_workers_dataloader=0 \
     ++train_config.output_dir=$output_dir \
     ++decode_log=$decode_log \
-    ++ckpt_path=$ckpt_path
+    ++ckpt_path=$ckpt_path/pytorch_model.bin
 
 python clean_marks.py ${decode_log}_gt
 python clean_marks.py ${decode_log}_pred
