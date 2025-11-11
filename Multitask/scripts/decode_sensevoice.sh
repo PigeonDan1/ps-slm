@@ -1,5 +1,5 @@
 #!/bin/bash
-run_dir=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/Adaptation
+run_dir=/aistor/sjtu/hpc_stor01/home/pengjing/workingspace/ps-slm/Multitask # change this to your own dir, like: xxx/ps-slm/Multitask
 cd  $run_dir
 code_dir=.
 
@@ -10,11 +10,12 @@ use_peft=false
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=1500
-ckpt_path=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/Adaptation/exp/20251104-2314-multitask_large-lorafalse_asr-st-slu_instruct_do_psd_true_ds_1_ctc_posterior_true_voca_trans_false_instruction_first/ps-slm_epoch_2_step_1000
+ckpt_path=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/Adaptation/exp/20251104-2314-multitask_large-lorafalse_asr-st-slu_instruct_do_psd_true_ds_1_ctc_posterior_true_voca_trans_false_instruction_first/ps-slm_epoch_2_step_1000 # dir/xx.bin
 dataset=librispeech
 task=asr
 split=test-other
 
+# TBD: u should change paths to your own paths
 if [ "$task" = "asr" ]; then
     if [ "$dataset" = "librispeech" ]; then
         test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/${task}/${split}/"
@@ -50,11 +51,12 @@ ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 top1_emb=false
 llm_name="Qwen2.5-1.5B-Instruct"
-llm_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/Qwen2.5-1.5B-Instruct
+llm_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/Qwen2.5-1.5B-Instruct # change this to your own path
 llm_dim=1536 #151936 #1536 3584
-model_factory=model/ps-slm.py:model_factory # create your own model_factory
+model_factory=model/ps-slm.py:model_factory # u can also create your own model_factory
 run_decode_device=0  # run decode on certain device
 decode_log=$ckpt_path/decode_${dataset}_${task}_${split}
+
 python \
     $code_dir/inference_batch.py \
     hydra.run.dir=$ckpt_path \
@@ -86,7 +88,9 @@ python \
     ++train_config.output_dir=$output_dir \
     ++decode_log=$decode_log \
     ++ckpt_path=$ckpt_path/pytorch_model.bin
+
 python clean_marks.py ${decode_log}_gt
 python clean_marks.py ${decode_log}_pred
+
 python utils/wenet_compute_cer.py --char=1 -v=1 ${decode_log}_gt ${decode_log}_pred > ${decode_log}_wer
 python utils/wenet_compute_cer.py --char=1 -v=1 ${decode_log}_gt ${decode_log}_pred > ${decode_log}_wer

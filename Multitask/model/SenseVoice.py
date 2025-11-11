@@ -1,5 +1,4 @@
 # Adapted from SenseVoice (https://github.com/FunAudioLLM/SenseVoice)
-# Modify Author: Jing Peng, X-Lance Lab, SJTU
 
 import time
 import torch
@@ -15,7 +14,6 @@ from funasr.train_utils.device_funcs import force_gatherable
 from funasr.losses.label_smoothing_loss import LabelSmoothingLoss
 from funasr.metrics.compute_acc import compute_accuracy, th_accuracy
 from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
-# from ctc_alignmentimport ctc_forced_align
 
 class SinusoidalPositionEncoder(torch.nn.Module):
     """ """

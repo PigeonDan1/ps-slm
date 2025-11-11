@@ -19,14 +19,7 @@ docker build -t tasu:latest .
 
 ## 2. Running on NVIDIA GPUs
 
-For NVIDIA GPU users, you can use the requirements.txt by:
-```bash
-pip install -r requirements.txt
-```
-
-- When adapting scripts or configs from the NPU version, replace a small number of `.npu` usages with `.gpu` (e.g., device tags or backend names).
-
-> Full GPU-specific support is under active development, and we plan to provide more detailed GPU setup and scripts soon.
+> Full GPU-specific support is under active development (actually is almost ready), and we plan to provide more detailed GPU setup and scripts soon.
 
 ---
 

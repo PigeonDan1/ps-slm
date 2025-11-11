@@ -4,7 +4,7 @@ COPY res /tmp
                                                                                                                                                                                                  
 SHELL ["/bin/bash", "-c"]                                                                                                                                                                      
                                                                                                                                                                                                  
-# 变量设置                                                                                                                                                                                     
+# setting                                                                                                                                                                                   
 ARG CANN_VER="8.0.0"                                                                                                                                                                           
 ARG PYTHON_VER="3.10.15"                                                                                                                                                                       
 ARG PYTHON_MAIN_VER="3.10"                                                                                                                                                                     
@@ -37,7 +37,8 @@ RUN rm -f /etc/apt/sources.list.d/* \
     && apt -o "Acquire::https::Verify-Peer=false" install -y --no-install-recommends ca-certificates \                                                                                         
     && apt install -y sudo curl gcc g++ make git cmake zlib1g zlib1g-dev openssh-server openssl libssl-dev libsqlite3-dev libffi-dev unzip \                                                   
        pciutils net-tools libblas-dev gfortran libblas3 unzip vim git wget dos2unix lzma libgl1-mesa-glx libglib2.0-dev python3-dev \                                                                      
-       pkg-config liblzma-dev libbz2-dev bash-completion \                                                                                                                                                     
+       pkg-config liblzma-dev libbz2-dev bash-completion pkg-config liblzma-dev libbz2-dev bash-completion \
+       sox libsox-fmt-all libsox-fmt-mp3 libsndfile1-dev ffmpeg ninja-build  \                                                                                                         
     && apt clean && rm -rf /var/lib/apt/lists/* \                                                                                                                                              
     && rm -f /var/lib/dpkg/statoverride \                                                                                                                                                      
     && touch /var/lib/dpkg/statoverride                                                                                                                                                        
@@ -65,7 +66,7 @@ RUN groupadd  HwHiAiUser -g 1000 \
     && mkdir -p /home/HwHiAiUser \                                                                                                                                                             
     && chown HwHiAiUser:HwHiAiUser /home/HwHiAiUser                                                                                                                                            
                                                                                                                                                                                                  
-# 安装pip包                                                                                                                                                                                    
+# pip install                                                                                                                                                                                  
 RUN pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir --upgrade pip \                                                                                                    
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir numpy==1.26.0 \                                                                                                 
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir decorator \                                                                                                     
@@ -83,7 +84,7 @@ RUN pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir --up
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir accelerate \                                                                                                    
     && pip3 install --no-cache-dir /tmp/pkg/apex-0.1+ascend-${CPYTHON_VER}-${CPYTHON_VER}-linux_aarch64.whl                                                                                    
                                                                                                                                                                                                  
-# 安装toolkit/kernel/                                                                                                                                                                          
+# install toolkit/kernel/                                                                                                                                                                          
 RUN cd /tmp \                                                                                                                                                                                  
     && wget -O "/tmp/pkg/$TORCH_NPU_PKG" "https://gitee.com/ascend/pytorch/releases/download/v6.0.0-pytorch2.1.0/${TORCH_NPU_PKG}" \                                                           
     && wget -O "/tmp/pkg/$TOOLKIT_PKG" "https://ascend-repo.obs.cn-east-2.myhuaweicloud.com/CANN/CANN%20${CANN_VER}/${TOOLKIT_PKG}?response-content-type=application/octet-stream" \           
@@ -97,7 +98,7 @@ RUN cd /tmp \
     && ./pkg/$NNAL_PKG --install-path=/usr/local/Ascend/ --install --quiet --install-for-all \                                                                                                 
     && rm -rf /tmp/*                                                                                                                                                                           
                                                                                                                                                                                                  
-# 安装MindSpeed for all                                                                                                                                                                        
+# install MindSpeed for all                                                                                                                                                                        
 RUN cd / \                                                                                                                                                                                     
     && git clone https://gitee.com/ascend/MindSpeed.git \                                                                                                                                      
     && cd MindSpeed \                                                                                                                                                                          
@@ -106,6 +107,25 @@ RUN cd / \
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple -r requirements.txt \                                                                                                          
     && pip3 install -e . 
 
+# other pip requirements
+    RUN pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir \
+    packaging \
+    editdistance \
+    gpustat \
+    wandb \
+    tqdm \
+    soundfile \
+    matplotlib \
+    sentencepiece \
+    pandas \
+    h5py \
+    hydra-core==1.3.2 \
+    omegaconf==2.3.0 \
+    kaldiio \
+    peft==0.6.0 \
+    funasr \
+    modelscope \
+    torchaudio==2.1.0 \
+    openai-whisper
 
-RUN cd ps-slm \
-  && pip3 install -r requirements.txt
+

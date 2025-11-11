@@ -1,8 +1,11 @@
-# Modify Author: Jing Peng, Yi Yang, X-Lance Lab, SJTU
+# TASU: Text-Only Alignment for Speech Understanding
+# Authors: Jing Peng*, Yi Yang (X-LANCE Lab, Shanghai Jiao Tong University)
+# Repository: https://github.com/PigeonDan1/ps-slm 
+# Adapted from: https://github.com/X-LANCE/SLAM-LLM 
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 import os
 import sys
 import logging
@@ -13,14 +16,13 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, AutoConfig
 from peft import PeftModel, LoraConfig, TaskType, get_peft_model, prepare_model_for_kbit_training
 from utils.metric import compute_accuracy
 from utils.config_utils import generate_peft_config
-import h5py
 from utils.model_utils import print_model_size, print_module_size
 from utils.npu_flash_attn import patch_npu_flash_attn
 
 logger = logging.getLogger(__name__)
 
+
 def setup_tokenizer(train_config, model_config, **kwargs):
-    # Load the tokenizer and add special tokens
     tokenizer = AutoTokenizer.from_pretrained(model_config.llm_path)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer
@@ -35,8 +37,8 @@ def setup_encoder(train_config, model_config, **kwargs):
             param.requires_grad = False
         encoder.eval()
         print_module_size(encoder, encoder_name, int(os.environ["RANK"]) if train_config.enable_fsdp or train_config.enable_ddp else 0)
-
     return encoder
+
 
 def setup_encoder_projector(train_config, model_config, **kwargs):
     if model_config.encoder_projector == "linear":
@@ -100,12 +102,12 @@ def setup_llm(train_config, model_config, **kwargs):
     if train_config.quantization:
         model = prepare_model_for_kbit_training(model)
 
-    if train_config.freeze_llm: # TODO:to test offical `freeze_layers` and `num_freeze_layers`
+    if train_config.freeze_llm: 
         for name, param in model.named_parameters(): 
             param.requires_grad = False
         model.eval()
         
-    if kwargs.get("peft_ckpt", None): # (FIX:MZY):reload will get wrong results when decoding
+    if kwargs.get("peft_ckpt", None): 
         logger.info("loading peft_ckpt from: {}".format(kwargs.get("peft_ckpt")))
         model = PeftModel.from_pretrained(model=model, model_id=kwargs.get("peft_ckpt"), is_trainable=True)
         model.print_trainable_parameters()
@@ -210,7 +212,6 @@ class slam_model_asr(torch.nn.Module):
             self.cross_attn = True
         else:
             self.cross_attn = False
-        # if self.gt_emb:
         from model.tokenizer import SenseVoiceTokenizer
         self.encoder_tokenizer = SenseVoiceTokenizer(model_config.encoder_path)  
     
@@ -249,10 +250,8 @@ class slam_model_asr(torch.nn.Module):
         """
         B, T, D = encoder_out.shape
         device  = encoder_out.device
-
         is_log_prob = ctc_posterior.max() <= 0
         ctc_probs = ctc_posterior.exp() if is_log_prob else ctc_posterior
-        # print(f"raw_shape: {encoder_out.shape}, raw_lens: {encoder_out_lens}")
         keep_frames, new_lens = [], []
         for b in range(B):
             L = encoder_out_lens[b].item()
@@ -260,7 +259,6 @@ class slam_model_asr(torch.nn.Module):
                 keep_frames.append(encoder_out.new_zeros(0, D))
                 new_lens.append(0)
                 continue
-
             ids = ctc_probs[b, :L].argmax(dim=-1)  # [L]
 
             # ---- Merge adjacent identical non-blank character frames ----
@@ -281,7 +279,6 @@ class slam_model_asr(torch.nn.Module):
                         if seg_len > 5:
                             print(f"[PSD] Warning: batch={b}, char={char_id}, "
                                 f"continuous frames={seg_len} (>5)")
-                        # print(f"seglen: {seg_len}")
                         merged_feats.append(encoder_out[b, start:end].mean(dim=0))
                         avg_blank_prob = ctc_probs[b, start:end, blank_id].mean()
                         merged_blank_probs.append(avg_blank_prob)
@@ -299,7 +296,7 @@ class slam_model_asr(torch.nn.Module):
             keep_frames.append(feats_after_blank)
             new_lens.append(feats_after_blank.size(0))
 
-        # 4) pad to batch's maximum length
+        # pad to batch's maximum length
         max_len = max(new_lens) if new_lens else 0
         if max_len == 0:
             return encoder_out.new_zeros(B, 0, D), \
@@ -313,8 +310,7 @@ class slam_model_asr(torch.nn.Module):
             padded.append(feat)
         encoder_outs = torch.stack(padded, dim=0)  # [B, T_new, D]
         new_lens = torch.tensor(new_lens, dtype=torch.long, device=device)
-        # print(f"encoder_outs_shape: {encoder_outs.shape}, new_lens: {new_lens}")
-        # input()
+
         return encoder_outs, new_lens
     
     def ids2text(self, ids: torch.LongTensor, llm):
@@ -347,11 +343,6 @@ class slam_model_asr(torch.nn.Module):
 
         # real length
         lens = torch.tensor([len(ids) for ids in ids_list], dtype=torch.long)
-
-        # for t, ids in zip(texts, ids_list):
-        #     print(tok.decode(ids), t)
-        # input()
-        # aligned length
         max_len = lens.max().item()
         vocab_size = tok.vocab_size
 
@@ -375,13 +366,11 @@ class slam_model_asr(torch.nn.Module):
         vocab_size = tok.vocab_size
         device = next(self.parameters()).device
 
-        # ---------- parameters ----------
         drop_prob   = getattr(self, 'drop_prob',   0.05)          # drop probability
         insert_prob = getattr(self, 'insert_prob', 0.0)          # Relative length insertion ratio
         smooth_low  = getattr(self, 'smooth_low',  0.0)           # α range
         smooth_high = getattr(self, 'smooth_high', 0.1)
         blank_id    = self.encoder.blank_id  # preserve blank
-        # --------------------------
 
         ids_list = [tok.encode(t) for t in texts]
         processed = []
@@ -477,8 +466,6 @@ class slam_model_asr(torch.nn.Module):
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
                 else:
                     if self.do_psd:
-                        # encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens,self.encoder.blank_id)
-                        # encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
                         encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
                     else:
                         encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
@@ -609,17 +596,7 @@ class slam_model_asr(torch.nn.Module):
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
                 else:
                     if self.do_psd:
-                        # encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens,self.encoder.blank_id)
-                        # encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
                         encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
-                        # append_to_cpu_file('ctc', encoder_outs.cpu().half(), encoder_feature_length.cpu())
-                        # import re
-                        # texts = [re.sub(r"[^A-Za-z\s.,!?]+", "", t).lower().strip()   
-                        #         for t in targets]
-                        # encoder_outs_1, encoder_feature_length_1 = self.ctc_pseudo_posterior_noise(texts)   # [B, L_max, vocab_size]
-                        # encoder_outs_2, encoder_feature_length_2 = self.ctc_pseudo_posterior(texts) 
-                        # append_to_cpu_file('noise', encoder_outs_1.cpu().half(), encoder_feature_length_1.cpu())
-                        # append_to_cpu_file('clean', encoder_outs_2.cpu().half(), encoder_feature_length_2.cpu())
                     else:
                         encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
                 if self.cross_attn:
@@ -695,6 +672,7 @@ class slam_model_asr(torch.nn.Module):
         )
 
         return model_outputs
+
     def _merge_input_ids_with_audio_features(
         self, audio_features, num_audio_tokens, inputs_embeds, input_ids, attention_mask, labels
     ):

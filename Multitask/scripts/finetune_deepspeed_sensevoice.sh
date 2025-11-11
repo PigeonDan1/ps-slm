@@ -7,10 +7,9 @@ export HCCL_CONNECT_TIMEOUT=7200
 export HYDRA_FULL_ERROR=1
 export OMP_NUM_THREADS=1
 export TASK_QUEUE_ENABLE=2
-# export ASCEND_LAUNCH_BLOCKING=0
 export ASCEND_LAUNCH_BLOCKING=1
 export CPU_AFFINITY_CONF=2  
-run_dir=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/Adaptation
+run_dir=/aistor/sjtu/hpc_stor01/home/pengjing/workingspace/ps-slm/Multitask # change this to your local dir
 cd $run_dir
 code_dir=.
 dataset=multitask_large
@@ -23,7 +22,7 @@ else
     dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
 fi
 
-train_max_frame_length=1500
+train_max_frame_length=1500 # you can change this accroding to your process memory
 eval_max_frame_length=2500
 multitask_prompt_path=conf/multiprompt.jsonl
 
@@ -50,16 +49,18 @@ encoder_name=sensevoice
 speech_encoder_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall
 encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
+
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
 llm_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/Qwen2.5-1.5B-Instruct
 llm_dim=1536 #151936 # 1536 3584
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
+
 # prompt_style='<|im_start|>user\\n<speech>{}<|im_end|>\\n<|im_start|>assistant\\n' # audio first
 prompt_fig=instruction_first
+
 output_dir=${code_dir}/exp/$(date +"%Y%m%d-%H%M")-$dataset-lora${use_peft}_${task}_instruct_do_psd_${do_psd}_ds_${encoder_projector_ds_rate}_ctc_posterior_${ctc_posterior}_voca_trans_${voca_trans}_${prompt_fig}
-ckpt_path=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/ASR_ST/exp/20251009-2139-multitask_large-lorafalse_asr-st-slu_instruct_do_psd_true_ds_1_ctc_posterior_true_voca_trans_false_instruction_first/ps-slm_epoch_2_step_6000
-simulator_ckpt_path=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/Learn_CTC/exp/20251102-1453-asr-lorafalse_asr_instruct_do_psd_false_ds_1_ctc_posterior_true_voca_trans_false_instruction_first/ps-slm_epoch_3_step_100
+
 hydra_args="
 hydra.run.dir=$output_dir \
 ++model_config.file=$model_factory \
@@ -97,33 +98,33 @@ hydra.run.dir=$output_dir \
 ++train_config.output_dir=$output_dir \
 ++metric=acc \
 "
-# ++train_config.simulator_ckpt_path=$simulator_ckpt_path/pytorch_model.bin \
-# ++ckpt_path=$ckpt_path/pytorch_model.bin \
-# deepspeed \
-#     --num_nodes 1 \
-#     --num_gpus 2 \
-#     $code_dir/finetune_deepspeed.py \
-#     ++train_config.enable_fsdp=false \
-#     ++train_config.enable_ddp=true \
-#     ++train_config.use_fp16=$use_fp16 \
-#     ++deepspeed_config=$deepspeed_config \
-#     ${hydra_args}
 
-
-HOST_FILE="/tmp/"${JobID}                        
- 
-echo "${VC_MASTER_HOSTS} slots=${GPU_PER_TASK}" > ${HOST_FILE}
-echo "${VC_WORKER_HOSTS}" | awk -F ',' -v gpu_num=$GPU_PER_TASK '{for (i=1; i<=NF; i++) print $i" slots="gpu_num}' >> ${HOST_FILE}
-
+# if you want to run on local, then:
 deepspeed \
-    --node_rank=$RANK \
-    --master_addr $MASTER_ADDR \
-    --master_port $MASTER_PORT \
-    --hostfile $HOST_FILE \
-    --no_ssh \
+    --num_nodes 1 \
+    --num_gpus 8 \
     $code_dir/finetune_deepspeed.py \
     ++train_config.enable_fsdp=false \
     ++train_config.enable_ddp=true \
     ++train_config.use_fp16=$use_fp16 \
     ++deepspeed_config=$deepspeed_config \
     ${hydra_args}
+
+# if you run on vc slurms, then:
+# HOST_FILE="/tmp/"${JobID}                        
+ 
+# echo "${VC_MASTER_HOSTS} slots=${GPU_PER_TASK}" > ${HOST_FILE}
+# echo "${VC_WORKER_HOSTS}" | awk -F ',' -v gpu_num=$GPU_PER_TASK '{for (i=1; i<=NF; i++) print $i" slots="gpu_num}' >> ${HOST_FILE}
+
+# deepspeed \
+#     --node_rank=$RANK \
+#     --master_addr $MASTER_ADDR \
+#     --master_port $MASTER_PORT \
+#     --hostfile $HOST_FILE \
+#     --no_ssh \
+#     $code_dir/finetune_deepspeed.py \
+#     ++train_config.enable_fsdp=false \
+#     ++train_config.enable_ddp=true \
+#     ++train_config.use_fp16=$use_fp16 \
+#     ++deepspeed_config=$deepspeed_config \
+#     ${hydra_args}

@@ -25,7 +25,7 @@ class ConformerConfig:
 
 @dataclass
 class ModelConfig:
-    file: str = "model/aispeech_asr.py:model_factory" # pj: you can also use your own model_factory here
+    file: str = "model/ps-slm.py:model_factory" # you can also use your own model_factory here
     llm_name: str = "Qwen2.5-7B-Instruct"
     llm_path: str = "PATH/to/LLAMA/7B"
     llm_type: str = "decoder_only"
@@ -134,7 +134,6 @@ class DataConfig:
     multitask_prompt_path: str = "conf/multiprompt.jsonl"
     prompt_style: str = "<|im_start|>user\n{}<speech><|im_end|>\n<|im_start|>assistant\n"
     append_info_tasks : List = field(default_factory=lambda: ["hotword"])
-    # file: str = "dataset/speech_dataset_large.py:get_speech_dataset"
     train_scp_file_path: str = ""
     dev_scp_file_path: str = ""
     test_scp_file_path: str = ""
@@ -163,8 +162,7 @@ class DataConfig:
 class FSDPConfig:
     mixed_precision: bool = True
     use_fp16: bool = False
-    # sharding_strategy = "FULL_SHARD" #ShardingStrategy = ShardingStrategy.FULL_SHARD
-    sharding_strategy: ShardingStrategy = "SHARD_GRAD_OP" #ShardingStrategy.NO_SHARD #MZY: set NO_SHARD when use DDP
+    sharding_strategy: ShardingStrategy = "SHARD_GRAD_OP" #ShardingStrategy.NO_SHARD 
     checkpoint_type: str = "SHARDED_STATE_DICT"  # alternatively can use SHARDED_STATE_DICT save one file per rank, and can resize the world-size.
     fsdp_activation_checkpointing: bool = True
     fsdp_cpu_offload: bool = False
