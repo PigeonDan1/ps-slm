@@ -1,3 +1,4 @@
+# Modify Author: Jing Peng, Yi Yang, X-Lance Lab, SJTU
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -16,60 +17,6 @@ from utils.model_utils import print_model_size, print_module_size
 from utils.npu_flash_attn import patch_npu_flash_attn
 
 logger = logging.getLogger(__name__)
-def ctc_greedy_search(
-                log_probs: torch.Tensor,
-                input_lens: torch.Tensor,
-                blank_id: int = 0,
-            ) -> List[List[int]]:
-                """
-                Args
-                ----
-                log_probs : (T, B, V)  log-softmax probability
-                input_lens: (B,)        The effective frame length of each sample
-                blank_id  : int         blank id
-
-                Returns
-                -------
-                List[List[int]] : The list of token IDs decoded from each sample
-                """
-                T, B, V = log_probs.shape
-                input_lens = input_lens.long()
-                device = log_probs.device
-
-                # 1. argmax obtains the token at each moment
-                indices = log_probs.argmax(dim=-1)  # (T, B)
-
-                # 2. Deduplicate samples one by one & remove blanks
-                results = []
-                for b in range(B):
-                    seq = indices[:input_lens[b], b].cpu().tolist() 
-                    dedup = [seq[0]] if seq else []
-                    for t in range(1, len(seq)):
-                        if seq[t] != seq[t-1] and seq[t] != blank_id:
-                            dedup.append(seq[t])
-                    # The beginning and end might still be blank, filter them once more.
-                    final = [idx for idx in dedup if idx != blank_id]
-                    results.append(final)
-
-                return results
-def extract_variable_length_features(self, x: torch.Tensor):
-        """
-        x : torch.Tensor, shape = (batch_size, n_mels, n_ctx)
-            the mel spectrogram of the audio
-        """
-        x = F.gelu(self.conv1(x))
-        x = F.gelu(self.conv2(x))
-        x = x.permute(0, 2, 1)
-
-        # assert x.shape[1:] == self.positional_embedding.shape, "incorrect audio shape"
-        # x = (x + self.positional_embedding).to(x.dtype)
-        x = (x + self.positional_embedding[: x.shape[1]]).to(x.dtype)
-
-        for block in self.blocks:
-            x = block(x)
-
-        x = self.ln_post(x)
-        return x
 
 def setup_tokenizer(train_config, model_config, **kwargs):
     # Load the tokenizer and add special tokens
@@ -230,38 +177,6 @@ def model_factory(train_config, model_config, **kwargs):
 import os
 import h5py
 import numpy as np
-
-def append_to_cpu_file(dist_name, tensor, length):
-    """
-    tensor:  [B, T, V]   .cpu().half()
-    length:  [B]         .cpu()
-    Store the entire segment directly without trimming the padding.
-    """
-    h5_path = '/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/distribution/cpu_cache.h5'
-    print(f"Save {dist_name} distribution ...")
-
-    # 转成 NumPy float16
-    tensor_np = tensor.numpy()
-
-    with h5py.File(h5_path, 'a') as f:
-        # Create a group for each distribution
-        grp = f.require_group(dist_name)
-
-        # Current number of samples in the group = next index
-        next_idx = len(grp)
-
-        # write sample by sample
-        for b in range(tensor_np.shape[0]):
-            ds_name = f'{next_idx + b:08d}'        # padding zero for ordering
-            grp.create_dataset(
-                ds_name,
-                data=tensor_np[b],                  # [T, V] 
-                dtype=np.float16,
-                compression='gzip',                 # Can save 3 to 5 times the disk space
-                compression_opts=4
-            )
-            # Store the actual length as an attribute
-            grp[ds_name].attrs['length'] = int(length[b])
 
 class slam_model_asr(torch.nn.Module):
     def __init__(
@@ -981,87 +896,3 @@ class slam_model_asr(torch.nn.Module):
 
         return final_embedding, final_attention_mask, final_labels, position_ids, final_input_ids
     
-
-    def remove_blank_frames(self, logits, lengths, blank_id):
-        """
-        logits: (B, T, V) original CTC logits
-        lengths: (B,) original valid frames
-        blank_id: int blank token's id（V_real）
-
-        return:
-            new_logits : (B, T', V)  Blank has been removed and re-padded
-            new_lengths: (B,)        Number of new valid frames
-        """
-        B, T, V = logits.shape
-        device = logits.device
-
-        # 1. greedy decode token id
-        pred_ids = torch.argmax(logits, dim=-1)            # (B, T)
-
-        # 2. Remove blank frames one by one
-        new_logits_list = []
-        new_lengths = []
-        max_len = 0
-
-        for b in range(B):
-            # 有效帧
-            L = lengths[b]
-            ids_b = pred_ids[b, :L]                         
-            keep_mask = ids_b != blank_id                  # True saved
-            new_logits_b = logits[b, :L][keep_mask]        # (L', V)
-
-            new_len = new_logits_b.size(0)
-            new_lengths.append(new_len)
-            new_logits_list.append(new_logits_b)
-            max_len = max(max_len, new_len)
-
-        # 3. re-padding
-        new_logits = []
-        for b in range(B):
-            pad_len = max_len - new_lengths[b]
-            padded = F.pad(new_logits_list[b], (0, 0, 0, pad_len))  # (max_len, V)
-            new_logits.append(padded)
-        new_logits = torch.stack(new_logits, dim=0)        # (B, max_len, V)
-        new_lengths = torch.tensor(new_lengths, device=device)
-
-        return new_logits, new_lengths
-
-# debug to see the output from sensevoice
-        # with torch.no_grad():
-        #     ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)
-        #     b, n, d = encoder_out.size()
-        #     for i in range(b):
-        #         x = ctc_probs[i, : encoder_out_lens[i].item(), :]
-        #         yseq = x.argmax(dim=-1)
-        #         yseq = torch.unique_consecutive(yseq, dim=-1)
-        #         mask = yseq != self.encoder.blank_id
-        #         token_int = yseq[mask].tolist()
-        #         import sentencepiece as spm
-        #         bpe_model_path = "/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall/chn_jpn_yue_eng_ko_spectok.bpe.model"
-        #         tokenizer = spm.SentencePieceProcessor()
-        #         tokenizer.load(bpe_model_path)
-        #         text = tokenizer.decode(token_int)
-        #         print()
-def global_mean_var(t, mask=None, unbiased=False):
-    """
-    t: (B, T, D)；mask: (B, T) =1 valid, 0 padding
-    return: mean (B,), var (B,)
-    """
-    if mask is None:
-        # directly flat (B, T*D)
-        mean = t.mean(dim=(1, 2))                        # (B,)
-        var  = t.var(dim=(1, 2), unbiased=unbiased)      # (B,)
-    else:
-        # Perform weighted averaging only on valid frames
-        mask = mask.unsqueeze(-1)                        # (B, T, 1)
-        valid = mask.sum(dim=(1, 2)).clamp(min=1)        # avoid dividing by 0
-        mean  = (t * mask).sum(dim=(1, 2)) / valid       # (B,)
-        var   = (((t - mean[:, None, None]) ** 2) * mask).sum(dim=(1,2)) / valid
-    return mean, var
-# inputs_mean, inputs_var = global_mean_var(inputs_embeds, attention_mask)
-        # proj_mean,   proj_var   = global_mean_var(projector_outs)   # If the projector also has a mask, it can be passed in.
-        # print(f"inputs_mean: {inputs_mean}, inputs_var: {inputs_var}")
-        # print(f"proj_mean: {proj_mean}, proj_var: {proj_var}")
-        # print(f"proj_mean_all: {proj_mean.abs().mean().item()}")
-        # print(f"proj_var_all: {proj_var.abs().mean().item()}")
-        # input()
