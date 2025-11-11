@@ -1,3 +1,5 @@
+# Modify Author: Jing Peng, Yi Yang, X-Lance Lab, SJTU
+
 import torch
 from torch.utils.data import Dataset,IterableDataset
 import whisper
