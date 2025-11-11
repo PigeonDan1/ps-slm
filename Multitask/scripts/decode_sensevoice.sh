@@ -10,7 +10,7 @@ use_peft=false
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=1500
-ckpt_path=/aistor/sjtu/hpc_stor01/home/yangyi/Legoslm/Adaptation/exp/20251104-2314-multitask_large-lorafalse_asr-st-slu_instruct_do_psd_true_ds_1_ctc_posterior_true_voca_trans_false_instruction_first/ps-slm_epoch_2_step_1000 # dir/xx.bin
+ckpt_path= # xx.bin
 dataset=librispeech
 task=asr
 split=test-other
@@ -87,7 +87,7 @@ python \
     ++train_config.num_workers_dataloader=0 \
     ++train_config.output_dir=$output_dir \
     ++decode_log=$decode_log \
-    ++ckpt_path=$ckpt_path/pytorch_model.bin
+    ++ckpt_path=$ckpt_path
 
 python clean_marks.py ${decode_log}_gt
 python clean_marks.py ${decode_log}_pred
