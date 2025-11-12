@@ -4,10 +4,12 @@ TASU (Text-only Alignment for Speech Understanding) is a newly proposed training
 This repository contains the **core implementation** of the TASU algorithm.
 
 ---
+![TASU Overview](overview.png)
+---
 
 ## ⚙️ Environment Setup
 
-TASU is mainly developed and tested on **Huawei Ascend (910B) NPU clusters** (npu branch), but can also be adapted to **NVIDIA GPU** environments. You can use the dockerfile like:
+TASU is mainly developed and tested on **Huawei Ascend (910B) NPU clusters** (**npu** branch), but can also be adapted to **NVIDIA GPU** environments. You can use the dockerfile like:
 
 ```bash
 # Build image from Dockerfile in the current directory
@@ -65,6 +67,8 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
     - Method to use these ckpts: Download and Fill in the ckpt_path variable in scripts scripts/decode_sensevoice.sh with the path to the downloaded model checkpoint.
    
 5. One-Click Script:
+   
+   After changing some essential local path and downloading models, you can run with:
    
    Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
 
