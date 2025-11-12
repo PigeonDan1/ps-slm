@@ -76,7 +76,7 @@ RUN pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir --up
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir six \                                                                                                           
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir torch==2.1.0 \                                                                                                  
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir torchvision==0.16.0 \                                                                                           
-    && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir transformers==4.38.2  \                                                                                         
+    && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir transformers==4.46.3  \                                                                                         
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir protobuf \                                                                                                      
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir regex \                                                                                                         
     && pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir psutil \                                                                                                        
