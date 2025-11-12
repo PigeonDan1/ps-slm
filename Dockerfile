@@ -60,7 +60,7 @@ RUN pip install \
     deepspeed \
     kaldiio \
     peft==0.6.0 \
-    transformers==4.39.1 \
+    transformers==4.46.3 \
     torchaudio==2.4.0 \
     funasr \
     modelscope \

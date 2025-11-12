@@ -1,7 +1,11 @@
+# TASU: Text-Only Alignment for Speech Understanding
+# Authors: Jing Peng*, Yi Yang (X-LANCE Lab, Shanghai Jiao Tong University)
+# Repository: https://github.com/PigeonDan1/ps-slm 
+# Adapted from: https://github.com/X-LANCE/SLAM-LLM 
+
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 import os
 import sys
 import logging
@@ -15,66 +19,10 @@ from utils.config_utils import generate_peft_config
 from utils.model_utils import print_model_size, print_module_size
 # from utils.npu_flash_attn import patch_npu_flash_attn
 
-
 logger = logging.getLogger(__name__)
-def ctc_greedy_search(
-                log_probs: torch.Tensor,
-                input_lens: torch.Tensor,
-                blank_id: int = 0,
-            ) -> List[List[int]]:
-                """
-                Args
-                ----
-                log_probs : (T, B, V)  log-softmax 后的概率
-                input_lens: (B,)        每条样本的有效帧长
-                blank_id  : int         blank 的编号
 
-                Returns
-                -------
-                List[List[int]] : 每条样本解码后的 token id 列表
-                """
-                T, B, V = log_probs.shape
-                input_lens = input_lens.long()
-                device = log_probs.device
-
-                # 1. argmax 得到每个时刻的 token
-                indices = log_probs.argmax(dim=-1)  # (T, B)
-
-                # 2. 逐条样本去重 & 去 blank
-                results = []
-                for b in range(B):
-                    seq = indices[:input_lens[b], b].cpu().tolist()  # 取有效帧
-                    # 去重 + 去 blank
-                    dedup = [seq[0]] if seq else []
-                    for t in range(1, len(seq)):
-                        if seq[t] != seq[t-1] and seq[t] != blank_id:
-                            dedup.append(seq[t])
-                    # 首尾可能还是 blank，再过滤一次
-                    final = [idx for idx in dedup if idx != blank_id]
-                    results.append(final)
-
-                return results
-def extract_variable_length_features(self, x: torch.Tensor):
-        """
-        x : torch.Tensor, shape = (batch_size, n_mels, n_ctx)
-            the mel spectrogram of the audio
-        """
-        x = F.gelu(self.conv1(x))
-        x = F.gelu(self.conv2(x))
-        x = x.permute(0, 2, 1)
-
-        # assert x.shape[1:] == self.positional_embedding.shape, "incorrect audio shape"
-        # x = (x + self.positional_embedding).to(x.dtype)
-        x = (x + self.positional_embedding[: x.shape[1]]).to(x.dtype)
-
-        for block in self.blocks:
-            x = block(x)
-
-        x = self.ln_post(x)
-        return x
 
 def setup_tokenizer(train_config, model_config, **kwargs):
-    # Load the tokenizer and add special tokens
     tokenizer = AutoTokenizer.from_pretrained(model_config.llm_path)
     tokenizer.pad_token_id = tokenizer.eos_token_id
     return tokenizer
@@ -89,8 +37,8 @@ def setup_encoder(train_config, model_config, **kwargs):
             param.requires_grad = False
         encoder.eval()
         print_module_size(encoder, encoder_name, int(os.environ["RANK"]) if train_config.enable_fsdp or train_config.enable_ddp else 0)
-
     return encoder
+
 
 def setup_encoder_projector(train_config, model_config, **kwargs):
     if model_config.encoder_projector == "linear":
@@ -154,12 +102,12 @@ def setup_llm(train_config, model_config, **kwargs):
     if train_config.quantization:
         model = prepare_model_for_kbit_training(model)
 
-    if train_config.freeze_llm: # TODO:to test offical `freeze_layers` and `num_freeze_layers`
+    if train_config.freeze_llm: 
         for name, param in model.named_parameters(): 
             param.requires_grad = False
         model.eval()
         
-    if kwargs.get("peft_ckpt", None): # (FIX:MZY):reload will get wrong results when decoding
+    if kwargs.get("peft_ckpt", None): 
         logger.info("loading peft_ckpt from: {}".format(kwargs.get("peft_ckpt")))
         model = PeftModel.from_pretrained(model=model, model_id=kwargs.get("peft_ckpt"), is_trainable=True)
         model.print_trainable_parameters()
@@ -214,8 +162,11 @@ def model_factory(train_config, model_config, **kwargs):
     # patch_npu_flash_attn()
     ckpt_path = kwargs.get( "ckpt_path", None)
     if ckpt_path is not None:
-        logger.info("loading other parts from: {}".format(ckpt_path))
+        print(f"loading other parts from: {ckpt_path}")
         ckpt_dict = torch.load(ckpt_path, map_location="cpu")
+        print("Keys in the checkpoint:")
+        for key in ckpt_dict.keys():
+            print(key)
         model.load_state_dict(ckpt_dict, strict=False)
 
     print_model_size(
@@ -228,42 +179,6 @@ def model_factory(train_config, model_config, **kwargs):
         ),
     )
     return model, tokenizer
-
-import os
-import h5py
-import numpy as np
-
-def append_to_cpu_file(dist_name, tensor, length):
-    """
-    tensor:  [B, T, V]  已 .cpu().half()
-    length:  [B]        已 .cpu()
-    不裁剪 padding，直接整段存
-    """
-    h5_path = '/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/distribution/cpu_cache.h5'
-    print(f"Save {dist_name} distribution ...")
-
-    # 转成 NumPy float16
-    tensor_np = tensor.numpy()
-
-    with h5py.File(h5_path, 'a') as f:
-        # 为每个分布建一个 group
-        grp = f.require_group(dist_name)
-
-        # 当前组内已有样本数 = 下一个索引
-        next_idx = len(grp)
-
-        # 逐样本写入
-        for b in range(tensor_np.shape[0]):
-            ds_name = f'{next_idx + b:08d}'        # 补零方便排序
-            grp.create_dataset(
-                ds_name,
-                data=tensor_np[b],                  # [T, V] 原始形状
-                dtype=np.float16,
-                compression='gzip',                 # 可省 3~5 倍磁盘
-                compression_opts=4
-            )
-            # 把真实长度存为属性
-            grp[ds_name].attrs['length'] = int(length[b])
 
 class slam_model_asr(torch.nn.Module):
     def __init__(
@@ -295,11 +210,11 @@ class slam_model_asr(torch.nn.Module):
         self.voca_trans = train_config.voca_trans
         self.gt_emb = train_config.gt_emb
         self.gt_emb_noise = train_config.gt_emb_noise
+        self.gaussian_sim = train_config.get("gaussian_sim", False)
         if model_config.encoder_projector == "cross-attention":
             self.cross_attn = True
         else:
             self.cross_attn = False
-        # if self.gt_emb:
         from model.tokenizer import SenseVoiceTokenizer
         self.encoder_tokenizer = SenseVoiceTokenizer(model_config.encoder_path)  
     
@@ -319,77 +234,27 @@ class slam_model_asr(torch.nn.Module):
                 if isinstance(item, nn.LayerNorm):
                     item.forward = types.MethodType(new_forward, item)
 
-    # def psd(
-    #         self,
-    #         encoder_out: torch.Tensor,
-    #         encoder_out_lens: torch.Tensor,
-    #         blank_id: int = 0,
-    #         blank_threshold: float = 0.90
-    # ) -> Tuple[torch.Tensor, int]:
-    #     """
-    #     删除高置信 blank 帧，重新 padding，老版本-没有merge!。
-    #     返回:
-    #         encoder_outs          : [B, T_new, D]  已 0-pad
-    #         encoder_feature_length: int           T_new 的最大帧数
-    #     """
-    #     B, T, D = encoder_out.shape
-    #     device  = encoder_out.device
-
-    #     with torch.no_grad():
-    #         ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)  # [B, T, V]
-
-    #     keep_frames = []
-    #     new_lens    = []
-    #     for b in range(B):
-    #         L = encoder_out_lens[b].item()
-    #         if L == 0:                      # 极端情况
-    #             keep_frames.append([])
-    #             new_lens.append(0)
-    #             continue
-
-    #         prob_blank = ctc_probs[b, :L, blank_id]            # [L]
-    #         mask = prob_blank < blank_threshold                # True 表示保留
-    #         idx  = torch.nonzero(mask, as_tuple=False).squeeze(-1)
-    #         keep_frames.append(encoder_out[b, idx])            # [M, D]
-    #         new_lens.append(idx.size(0))
-
-    #     max_len = max(new_lens) if new_lens else 0
-    #     if max_len == 0:                       # 整批都是空
-    #         return encoder_out.new_zeros(B, 0, D), 0
-
-    #     padded = []
-    #     for feat in keep_frames:
-    #         pad_len = max_len - feat.size(0)
-    #         if pad_len > 0:
-    #             feat = torch.cat([feat, feat.new_zeros(pad_len, D)], dim=0)
-    #         padded.append(feat)
-    #     encoder_outs = torch.stack(padded, dim=0)   # [B, T_new, D]
-    #     new_lens = torch.tensor(new_lens, dtype=torch.long, device=device)
-    #     return encoder_outs, new_lens
-
     def psd(
             self,
             encoder_out: torch.Tensor,      # [B, T, D]
             encoder_out_lens: torch.Tensor, # [B]
-            ctc_posterior: torch.Tensor,    # [B, T, V]  <-- 新增输入
+            ctc_posterior: torch.Tensor,    # [B, T, V]  
             blank_id: int = 0,
             blank_threshold: float = 0.90
     ) -> Tuple[torch.Tensor, torch.Tensor]:
         """
-        1. 只合并相邻且相同的非 blank 字符帧（空白帧不合并）
-        2. 若某字符连续帧数>5则打印
-        3. 用 blank 概率阈值 0.9 统一删除 blank 帧
-        4. 重新 0-pad
-        返回:
+        1. Only merge adjacent and identical non-blank character frames (blank frames are not merged)
+        2. If a certain character appears in more than 5 consecutive frames, print it.
+        3. Use a blank probability threshold of 0.9 to uniformly delete blank frames
+        4. 0-pad
+        return:
             encoder_outs : [B, T_new, D]
-            new_lens     : [B]   每句实际帧长
+            new_lens     : [B]   
         """
         B, T, D = encoder_out.shape
         device  = encoder_out.device
-
         is_log_prob = ctc_posterior.max() <= 0
         ctc_probs = ctc_posterior.exp() if is_log_prob else ctc_posterior
-        # print(f"raw_shape: {encoder_out.shape}, raw_lens: {encoder_out_lens}")
         keep_frames, new_lens = [], []
         for b in range(B):
             L = encoder_out_lens[b].item()
@@ -397,10 +262,9 @@ class slam_model_asr(torch.nn.Module):
                 keep_frames.append(encoder_out.new_zeros(0, D))
                 new_lens.append(0)
                 continue
-
             ids = ctc_probs[b, :L].argmax(dim=-1)  # [L]
 
-            # ---- 合并相邻相同非 blank 字符帧 ----
+            # ---- Merge adjacent identical non-blank character frames ----
             merged_feats, merged_blank_probs = [], []
             start = 0
             for end in range(1, L + 1):
@@ -409,16 +273,15 @@ class slam_model_asr(torch.nn.Module):
                     char_id = ids[start].item()
 
                     if char_id == blank_id:
-                        # blank 帧：每帧单独保留
+                        # blank frame：Keep each frame separately
                         for t in range(start, end):
                             merged_feats.append(encoder_out[b, t])
                             merged_blank_probs.append(ctc_probs[b, t, blank_id])
                     else:
-                        # 非 blank：合并整段
+                        # Not blank: merge the entire paragraph
                         if seg_len > 5:
                             print(f"[PSD] Warning: batch={b}, char={char_id}, "
                                 f"continuous frames={seg_len} (>5)")
-                        # print(f"seglen: {seg_len}")
                         merged_feats.append(encoder_out[b, start:end].mean(dim=0))
                         avg_blank_prob = ctc_probs[b, start:end, blank_id].mean()
                         merged_blank_probs.append(avg_blank_prob)
@@ -428,7 +291,7 @@ class slam_model_asr(torch.nn.Module):
             merged_blank_probs = torch.tensor(merged_blank_probs,
                                             device=device)        # [T_merged]
 
-            # ---- 用阈值 0.9 过滤 blank ----
+            # ---- Filter blanks with a threshold of 0.9 ----
             mask = merged_blank_probs < blank_threshold
             keep = mask.nonzero(as_tuple=False).squeeze(-1)
             feats_after_blank = merged_feats[keep]                    # [M, D]
@@ -436,7 +299,7 @@ class slam_model_asr(torch.nn.Module):
             keep_frames.append(feats_after_blank)
             new_lens.append(feats_after_blank.size(0))
 
-        # 4) pad 到 batch 最大长度
+        # pad to batch's maximum length
         max_len = max(new_lens) if new_lens else 0
         if max_len == 0:
             return encoder_out.new_zeros(B, 0, D), \
@@ -450,21 +313,20 @@ class slam_model_asr(torch.nn.Module):
             padded.append(feat)
         encoder_outs = torch.stack(padded, dim=0)  # [B, T_new, D]
         new_lens = torch.tensor(new_lens, dtype=torch.long, device=device)
-        # print(f"encoder_outs_shape: {encoder_outs.shape}, new_lens: {new_lens}")
-        # input()
+
         return encoder_outs, new_lens
     
     def ids2text(self, ids: torch.LongTensor, llm):
         """
-        ids: [B, T]  已 padding，-100 位置忽略
+        ids: [B, T]  padding
         llm: transformers.PreTrainedModel / AutoModelForCausalLM
-        return: list[str]  每条样本的文本
+        return: list[str]  The text of each sample
         """
-        # 1. 把 -100 变成 pad_token_id，其余保持
+        # 1. Change -100 to pad_token_id, keep the rest unchanged
         pad_id = llm.config.pad_token_id if llm.config.pad_token_id is not None else llm.config.eos_token_id
         ids = torch.where(ids == -100, pad_id, ids)
 
-        # 2. 解码
+        # 2. decode
         text_list = self.tokenizer.batch_decode(
             ids,
             skip_special_tokens=True,
@@ -472,29 +334,22 @@ class slam_model_asr(torch.nn.Module):
         )
         return text_list
 
-    import torch
-
     def ctc_pseudo_posterior(self, texts):
         """
-        texts: list[str]  —— 已解码文本
+        texts: list[str]  —— Decoded text
         return: 
-            posterior: [B, L_max, vocab_size]  one-hot 伪后验
-            lens:      [B]   每条样本的真实 token 长度
+            posterior: [B, L_max, vocab_size]  one-hot 
+            lens:      [B]   real token length
         """
         tok = self.encoder_tokenizer
         ids_list = [tok.encode(t) for t in texts]
 
-        # 真实长度
+        # real length
         lens = torch.tensor([len(ids) for ids in ids_list], dtype=torch.long)
-
-        # for t, ids in zip(texts, ids_list):
-        #     print(tok.decode(ids), t)
-        # input()
-        # 对齐长度
         max_len = lens.max().item()
         vocab_size = tok.vocab_size
 
-        # one-hot 伪后验
+        # one-hot 
         B = len(ids_list)
         posterior = torch.zeros(B, max_len, vocab_size, dtype=torch.float32)
         for b, ids in enumerate(ids_list):
@@ -504,24 +359,21 @@ class slam_model_asr(torch.nn.Module):
 
     def ctc_pseudo_posterior_noise(self, texts):
         """
-        texts: list[str]  —— 已解码文本
+        texts: list[str]  —— Decoded text
         return:
-            posterior: [B, L_max, vocab_size]  伪后验（已平滑+随机增删）
-            lens:      [B]   每条样本处理后的真实 token 长度
+            posterior: [B, L_max, vocab_size]  Pseudo-posterior (smoothed + random addition/deletion)
+            lens:      [B]   The actual token length of each sample after processing
         """
         print("Add noise simulation ...")
         tok = self.encoder_tokenizer
         vocab_size = tok.vocab_size
         device = next(self.parameters()).device
 
-        # ---------- 超参 ----------
-        drop_prob   = getattr(self, 'drop_prob',   0.05)          # 丢帧(字符)概率
-        insert_prob = getattr(self, 'insert_prob', 0.0)          # 相对长度插入比例
-        smooth_low  = getattr(self, 'smooth_low',  0.0)           # 平滑 α 范围
-        smooth_high = getattr(self, 'smooth_high', 0.2)
-        blank_id    = self.encoder.blank_id  # 预留 blank
-        # --------------------------
-
+        drop_prob   = getattr(self, 'drop_prob',   0.05)          # drop probability
+        insert_prob = getattr(self, 'insert_prob', 0.0)          # Relative length insertion ratio
+        smooth_low  = getattr(self, 'smooth_low',  0.0)           # α range
+        smooth_high = getattr(self, 'smooth_high', 0.1)
+        blank_id    = self.encoder.blank_id  # preserve blank
         ids_list = [tok.encode(t) for t in texts]
         processed = []
 
@@ -564,6 +416,7 @@ class slam_model_asr(torch.nn.Module):
                 position_ids: Optional[torch.LongTensor] = None,
                 past_key_values: Optional[List[torch.FloatTensor]] = None,
                 inputs_embeds: Optional[torch.FloatTensor] = None,
+                GT: Optional[List[str]] = None,
                 labels: Optional[torch.LongTensor] = None,
                 use_cache: Optional[bool] = None,
                 output_attentions: Optional[bool] = None,
@@ -574,7 +427,6 @@ class slam_model_asr(torch.nn.Module):
         speech = input_features
         B = speech.size(0)
 
-        # 构造 4 帧前缀
         language_query = self.encoder.embed(
             torch.tensor([[0]], device=speech.device)
         ).repeat(B, 1, 1)  # [B, 1, d_model]
@@ -587,15 +439,12 @@ class slam_model_asr(torch.nn.Module):
             torch.tensor([[1, 2]], device=speech.device)
         ).repeat(B, 1, 1)  # [B, 2, d_model]
 
-        # 按官方顺序拼接
-        speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1) 
-        speech_lengths = input_feature_length + 4  # 4 帧前缀
-
+        speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1)
+        speech_lengths = input_feature_length + 4  
+        
         raw_encoder_out, raw_encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
-
         if isinstance(raw_encoder_out, tuple):
             raw_encoder_out = raw_encoder_out[0]
-
 
         # delete formulate output: first 4 tokens
         raw_logits = self.encoder.ctc.ctc_lo(raw_encoder_out)
@@ -609,7 +458,7 @@ class slam_model_asr(torch.nn.Module):
             if self.voca_trans == False: 
                 if self.gt_emb:
                     print("Use Groundtruth Embeddings...")
-                    texts = self.ids2text(labels, self.llm) 
+                    texts = GT
                     device = labels.device
                     if self.gt_emb_noise:
                         encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior_noise(texts)   # [B, L_max, vocab_size]
@@ -619,8 +468,6 @@ class slam_model_asr(torch.nn.Module):
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
                 else:
                     if self.do_psd:
-                        # encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens,self.encoder.blank_id)
-                        # encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
                         encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
                     else:
                         encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
@@ -649,7 +496,7 @@ class slam_model_asr(torch.nn.Module):
                     ctc_outs = torch.softmax(logits_no_blank,dim=-1)
                     projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])
                     if self.top1_emb:
-                        # logits_no_blank: [B, T, V_real]   (已去掉 blank)
+                        # logits_no_blank: [B, T, V_real]   (drop blank)
                         print("Use Top1 pred_emb ....")
                         top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
                         projector_outs = embed_matrix[top1_ids]                    # [B, T, H]     
@@ -711,7 +558,6 @@ class slam_model_asr(torch.nn.Module):
         speech = input_features
         B = speech.size(0)
 
-        # 构造 4 帧前缀
         language_query = self.encoder.embed(
             torch.tensor([[0]], device=speech.device)
         ).repeat(B, 1, 1)  # [B, 1, d_model]
@@ -724,9 +570,8 @@ class slam_model_asr(torch.nn.Module):
             torch.tensor([[1, 2]], device=speech.device)
         ).repeat(B, 1, 1)  # [B, 2, d_model]
 
-        # 按官方顺序拼接
         speech = torch.cat([language_query, event_emo_query, textnorm_query, speech], dim=1)
-        speech_lengths = input_feature_length + 4  # 4 帧前缀
+        speech_lengths = input_feature_length + 4  
         
         raw_encoder_out, raw_encoder_out_lens = self.encoder.encoder(speech, speech_lengths)
         if isinstance(raw_encoder_out, tuple):
@@ -745,8 +590,7 @@ class slam_model_asr(torch.nn.Module):
                 if self.gt_emb:
                     print("Use Groundtruth Embeddings...")
                     import re
-                    # 测试阶段清洗
-                    texts = [re.sub(r"[^A-Za-z\s.,!?]+", "", t).lower().strip()   # 注意去掉了 '
+                    texts = [re.sub(r"[^A-Za-z\s.,!?]+", "", t).lower().strip()   
                             for t in targets]
                     device = input_ids.device
                     encoder_outs, encoder_feature_length = self.ctc_pseudo_posterior(texts)   # [B, L_max, vocab_size]
@@ -754,18 +598,8 @@ class slam_model_asr(torch.nn.Module):
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
                 else:
                     if self.do_psd:
-                        # encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens,self.encoder.blank_id)
-                        # encoder_outs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_outs), dim=-1)
+                        print("Apply PSD on CTC Posterior ...")
                         encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
-                        # append_to_cpu_file('ctc', encoder_outs.cpu().half(), encoder_feature_length.cpu())
-                        # import re
-                        # # 测试阶段清洗
-                        # texts = [re.sub(r"[^A-Za-z\s.,!?]+", "", t).lower().strip()   # 注意去掉了 '
-                        #         for t in targets]
-                        # encoder_outs_1, encoder_feature_length_1 = self.ctc_pseudo_posterior_noise(texts)   # [B, L_max, vocab_size]
-                        # encoder_outs_2, encoder_feature_length_2 = self.ctc_pseudo_posterior(texts) 
-                        # append_to_cpu_file('noise', encoder_outs_1.cpu().half(), encoder_feature_length_1.cpu())
-                        # append_to_cpu_file('clean', encoder_outs_2.cpu().half(), encoder_feature_length_2.cpu())
                     else:
                         encoder_outs, encoder_feature_length = ctc_posterior, encoder_out_lens
                 if self.cross_attn:
@@ -792,7 +626,7 @@ class slam_model_asr(torch.nn.Module):
                     ctc_outs = torch.softmax(logits_no_blank,dim=-1)
                     projector_outs = torch.einsum("btv,vh->bth", ctc_outs, embed_matrix[:V_real])
                     if self.top1_emb:
-                        # logits_no_blank: [B, T, V_real]   (已去掉 blank)
+                        # logits_no_blank: [B, T, V_real]   (drop blank)
                         print("Use Top1 pred_emb ....")
                         top1_ids = ctc_outs.argmax(dim=-1).to(torch.int32)                   # [B, T]
                         projector_outs = embed_matrix[top1_ids]                    # [B, T, H]     
@@ -841,6 +675,7 @@ class slam_model_asr(torch.nn.Module):
         )
 
         return model_outputs
+
     def _merge_input_ids_with_audio_features(
         self, audio_features, num_audio_tokens, inputs_embeds, input_ids, attention_mask, labels
     ):
@@ -1037,88 +872,3 @@ class slam_model_asr(torch.nn.Module):
 
         return final_embedding, final_attention_mask, final_labels, position_ids, final_input_ids
     
-
-    def remove_blank_frames(self, logits, lengths, blank_id):
-        """
-        logits: (B, T, V) 原始 CTC logits
-        lengths: (B,) 原始有效帧数
-        blank_id: int blank token 的 id（这里等于 V_real）
-
-        返回:
-            new_logits : (B, T', V)  已去掉 blank 并重新 pad
-            new_lengths: (B,)        新的有效帧数
-        """
-        B, T, V = logits.shape
-        device = logits.device
-
-        # 1. 贪婪解码 token id
-        pred_ids = torch.argmax(logits, dim=-1)            # (B, T)
-
-        # 2. 逐条去掉 blank 帧
-        new_logits_list = []
-        new_lengths = []
-        max_len = 0
-
-        for b in range(B):
-            # 有效帧
-            L = lengths[b]
-            ids_b = pred_ids[b, :L]                          # 取有效部分
-            keep_mask = ids_b != blank_id                  # True 保留
-            new_logits_b = logits[b, :L][keep_mask]        # (L', V)
-
-            new_len = new_logits_b.size(0)
-            new_lengths.append(new_len)
-            new_logits_list.append(new_logits_b)
-            max_len = max(max_len, new_len)
-
-        # 3. 重新 padding
-        new_logits = []
-        for b in range(B):
-            pad_len = max_len - new_lengths[b]
-            padded = F.pad(new_logits_list[b], (0, 0, 0, pad_len))  # (max_len, V)
-            new_logits.append(padded)
-        new_logits = torch.stack(new_logits, dim=0)        # (B, max_len, V)
-        new_lengths = torch.tensor(new_lengths, device=device)
-
-        return new_logits, new_lengths
-
-# debug to see the output from sensevoice
-        # with torch.no_grad():
-        #     ctc_probs = torch.softmax(self.encoder.ctc.ctc_lo(encoder_out), dim=-1)
-        #     b, n, d = encoder_out.size()
-        #     for i in range(b):
-        #         x = ctc_probs[i, : encoder_out_lens[i].item(), :]
-        #         yseq = x.argmax(dim=-1)
-        #         yseq = torch.unique_consecutive(yseq, dim=-1)
-        #         mask = yseq != self.encoder.blank_id
-        #         token_int = yseq[mask].tolist()
-        #         import sentencepiece as spm
-        #         # 加载 BPE 模型
-        #         bpe_model_path = "/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall/chn_jpn_yue_eng_ko_spectok.bpe.model"
-        #         tokenizer = spm.SentencePieceProcessor()
-        #         tokenizer.load(bpe_model_path)
-        #         text = tokenizer.decode(token_int)
-        #         print()
-def global_mean_var(t, mask=None, unbiased=False):
-    """
-    t: (B, T, D)；mask: (B, T) =1 有效, 0 padding
-    返回: mean (B,), var (B,)
-    """
-    if mask is None:
-        # 直接展平 (B, T*D)
-        mean = t.mean(dim=(1, 2))                        # (B,)
-        var  = t.var(dim=(1, 2), unbiased=unbiased)      # (B,)
-    else:
-        # 只对有效帧做加权平均
-        mask = mask.unsqueeze(-1)                        # (B, T, 1)
-        valid = mask.sum(dim=(1, 2)).clamp(min=1)        # 避免除0
-        mean  = (t * mask).sum(dim=(1, 2)) / valid       # (B,)
-        var   = (((t - mean[:, None, None]) ** 2) * mask).sum(dim=(1,2)) / valid
-    return mean, var
-# inputs_mean, inputs_var = global_mean_var(inputs_embeds, attention_mask)
-        # proj_mean,   proj_var   = global_mean_var(projector_outs)   # 若 projector 也有 mask，可传入
-        # print(f"inputs_mean: {inputs_mean}, inputs_var: {inputs_var}")
-        # print(f"proj_mean: {proj_mean}, proj_var: {proj_var}")
-        # print(f"proj_mean_all: {proj_mean.abs().mean().item()}")
-        # print(f"proj_var_all: {proj_var.abs().mean().item()}")
-        # input()

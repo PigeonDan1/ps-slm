@@ -1,5 +1,5 @@
 import torch
-from torch.utils.data import Dataset,IterableDataset
+from torch.utils.data import Dataset, IterableDataset
 import whisper
 import kaldiio
 import types
@@ -95,6 +95,14 @@ class MultiTaskDataset(IterableDataset):
                     key = item["key"]
                     target = item["target"]
                     task = item["task"]
+
+                    # 这里加入 GT
+                    raw = item.get("GT", "")
+                    try:
+                        GT = raw.encode("utf-8").decode("unicode_escape")
+                    except Exception:
+                        GT = raw
+
                     # pj: Modify the dataset based on your own encoder
                     if self.dataset_config.encoder == "whisper":
                         numpy_array = kaldiio.load_mat(ark_path)
@@ -109,8 +117,16 @@ class MultiTaskDataset(IterableDataset):
                         input_feature_length = input_features.shape[1]
                     else:
                         import torchaudio
-                        numpy_array = kaldiio.load_mat(ark_path)        # int16
-                        audio_raw = numpy_array[1].astype(np.float32) / 32768.0
+                        ext = os.path.splitext(ark_path)[1].lower()
+
+                        if ext == ".flac": # fix(pj): flac should be loaded by torchaudio
+                            waveform, sr = torchaudio.load(ark_path)   # [C, T]
+                            if waveform.size(0) > 1:
+                                waveform = waveform.mean(dim=0, keepdim=True)
+                            audio_raw = waveform.squeeze(0).numpy().astype(np.float32)
+                        else:
+                            numpy_array = kaldiio.load_mat(ark_path)        # int16
+                            audio_raw = numpy_array[1].astype(np.float32) / 32768.0
                         data_in = [audio_raw]      # List[np.ndarray]
                         kwargs = self.kwargs
                         frontend = kwargs.get("frontend", None)
@@ -158,8 +174,9 @@ class MultiTaskDataset(IterableDataset):
                             "attention_mask": attention_mask ,
                             "input_features": input_features ,
                             "input_feature_length":input_feature_length,
-                            'key': key,
-                            'target': target,
+                            "key": key,
+                            "target": target,
+                            "GT": GT,
                     }
                     
                     if  not self.inference_mode: 
@@ -275,6 +292,10 @@ class MultiTaskDataset(IterableDataset):
             "input_features": input_features,
             "input_feature_length": input_feature_length,
         }
+
+        # 聚合 GT
+        result["GT"] = [s["GT"] for s in samples]
+
         if self.inference_mode:
             result["keys"] = [s['key'] for s in samples]
             result["targets"] = [s['target'] for s in samples]
@@ -322,7 +343,3 @@ def get_speech_dataset(dataset_config, tokenizer, split):
     else:
         dataset = MultiTaskDynamicBatchDataset(dataset,partial(window_class,max_frame_length = dataset_config.eval_max_frame_length,ds_rate = dataset_config.ds_rate))
     return dataset
-
-
-
-    

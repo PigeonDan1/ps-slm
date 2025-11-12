@@ -25,7 +25,7 @@ class ConformerConfig:
 
 @dataclass
 class ModelConfig:
-    file: str = "model/aispeech_asr.py:model_factory" # pj: you can also use your own model_factory here
+    file: str = "model/ps-slm.py:model_factory" # you can also use your own model_factory here
     llm_name: str = "Qwen2.5-7B-Instruct"
     llm_path: str = "PATH/to/LLAMA/7B"
     llm_type: str = "decoder_only"
@@ -52,15 +52,15 @@ class PeftConfig:
 
 @dataclass
 class FbankConfig:
-    num_mel_bins: int = 80  # 梅尔频率滤波器组的滤波器数量为80
-    frame_length: int = 25  # 音频帧的长度为25毫秒
-    frame_shift: int = 10  # 帧移为10毫秒
-    dither: float = 0.001  # 抖动系数为0.001
-    window_type: str = "hamming"  # 使用hamming窗口类型
-    use_energy: bool = False  # 不使用能量特征
-    low_freq:int = 0  # 低频截止频率为0Hz
-    high_freq: int = 8000  # 高频截止频率为8000Hz
-    htk_compat: bool = True  # 尝试使其与HTK兼容
+    num_mel_bins: int = 80  
+    frame_length: int = 25  
+    frame_shift: int = 10 
+    dither: float = 0.001 
+    window_type: str = "hamming" 
+    use_energy: bool = False 
+    low_freq:int = 0
+    high_freq: int = 8000  
+    htk_compat: bool = True
 
 
 @dataclass
@@ -118,6 +118,7 @@ class TrainConfig:
     })
     freeze_encoder:bool = False
     device: Optional[int] = 0 
+    gaussian_sim: bool = False
 
 
 @dataclass
@@ -133,7 +134,6 @@ class DataConfig:
     multitask_prompt_path: str = "conf/multiprompt.jsonl"
     prompt_style: str = "<|im_start|>user\n{}<speech><|im_end|>\n<|im_start|>assistant\n"
     append_info_tasks : List = field(default_factory=lambda: ["hotword"])
-    # file: str = "dataset/speech_dataset_large.py:get_speech_dataset"
     train_scp_file_path: str = ""
     dev_scp_file_path: str = ""
     test_scp_file_path: str = ""
@@ -162,8 +162,7 @@ class DataConfig:
 class FSDPConfig:
     mixed_precision: bool = True
     use_fp16: bool = False
-    # sharding_strategy = "FULL_SHARD" #ShardingStrategy = ShardingStrategy.FULL_SHARD
-    sharding_strategy: ShardingStrategy = "SHARD_GRAD_OP" #ShardingStrategy.NO_SHARD #MZY: set NO_SHARD when use DDP
+    sharding_strategy: ShardingStrategy = "SHARD_GRAD_OP" #ShardingStrategy.NO_SHARD 
     checkpoint_type: str = "SHARDED_STATE_DICT"  # alternatively can use SHARDED_STATE_DICT save one file per rank, and can resize the world-size.
     fsdp_activation_checkpointing: bool = True
     fsdp_cpu_offload: bool = False

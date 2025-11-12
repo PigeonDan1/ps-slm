@@ -107,13 +107,12 @@ def main(kwargs: DictConfig):
 
 	
 	# Set the seeds for reproducibility
-	torch.npu.manual_seed(train_config.seed)
 	torch.manual_seed(train_config.seed)
 	random.seed(train_config.seed)
 	
 	model_factory = get_custom_model_factory(model_config, logger)
 	model, tokenizer = model_factory(train_config, model_config, **kwargs)
-	device = torch.device(f"npu:{train_config.device}" if torch.npu.is_available() else "cpu") # FIX(MZY): put the whole model to device.
+	device = torch.device(f"cuda:{train_config.device}" if torch.cuda.is_available() else "cpu") # FIX(MZY): put the whole model to device.
 	model.to(device)
 	model.eval()
 
@@ -143,10 +142,10 @@ def main(kwargs: DictConfig):
 		for step, batch in tqdm(enumerate(test_dataloader), total=len(test_dataloader) if train_config.batching_strategy != "dynamic" else ""):
 			for key in batch.keys():
 				batch[key] = batch[key].to(device) if isinstance(batch[key], torch.Tensor) else batch[key]
+			
 			model_outputs = model.generate(**batch)
 			output_text = model.tokenizer.batch_decode(model_outputs, add_special_tokens=False, skip_special_tokens=True)
 			print(output_text)
-			# input()
 			for key, text, target in zip(batch["keys"], output_text, batch["targets"]):
 				pred.write(key + "\t" + text.replace("\n", " ") + "\n")
 				gt.write(key + "\t" + target + "\n")

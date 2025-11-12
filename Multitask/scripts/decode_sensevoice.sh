@@ -1,5 +1,5 @@
 #!/bin/bash
-run_dir=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR
+run_dir=/hpc_stor03/sjtu_home/jing.peng/workspace/ps-slm/Multitask # change this to your own dir, like: xxx/ps-slm/Multitask
 cd  $run_dir
 code_dir=.
 
@@ -9,29 +9,40 @@ projector=linear-silu #simple_linear
 use_peft=false
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
-eval_max_frame_length=3000
-ckpt_path=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/SLAM-LLM-ASR/exp/librispeech-loratrue_asr_instruct_do_psd_true_ds_1_ctc_posterior_true_merge_voca_trans_false_instruction_first/ps-slm_epoch_5_step_1300
+eval_max_frame_length=1500
+ckpt_path=/hpc_stor03/sjtu_home/jing.peng/nfs/model/tasu/yyy1421129/ps-slm/half_audio_finetuned # ckpt_dir/
 dataset=librispeech
 task=asr
-split=test-other
+split=train
 
+# TBD: u should change paths to your own paths
 if [ "$task" = "asr" ]; then
     if [ "$dataset" = "librispeech" ]; then
-        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
-    elif [ "$dataset" = "gigaspeech" ]; then
-        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
+        test_scp_file_path="/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/data/librispeech_asr/train/"
+    elif [ "$dataset" = "commonvoice" ]; then
+        test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/common_voice/${split}/"
     elif [ "$dataset" = "slidespeech" ]; then
         test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/${split}/"
     elif [ "$dataset" = "tts_en_rare_words" ]; then
         test_scp_file_path="/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/test/${dataset}"
+    elif [ "$dataset" = "MLS_en" ]; then
+        test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/MultiLingualSpeechRecognition_MLS-en/"
+    elif [ "$dataset" = "TED" ]; then
+        test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/tedlium3/"
     fi
 elif [ "$task" = "st" ]; then
-    test_scp_file_path="/aistor/aispeech/hpc_stor01/home/pengjing00sx/nfs/data/test/librispeech_st/"
+    test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/multitask_small/${split}"
+elif [ "$task" = "qa" ]; then
+    test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/${dataset}"
+elif [ "$task" = "SLU" ]; then
+    test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/slurp/test"
+elif [ "$task" = "sentiment" ]; then
+    test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/GLUE/sst2"
 fi
 
 # Choose Encoder
 encoder_name=sensevoice
-speech_encoder_path=/aistor/aispeech/hpc_stor01/group/asr/model/SenseVoiceSmall
+speech_encoder_path=/hpc_stor03/sjtu_home/bohan.li/projects/ps-slm/pretrained_models/SenseVoiceSmall
 encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1
 
@@ -40,11 +51,12 @@ ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 top1_emb=false
 llm_name="Qwen2.5-1.5B-Instruct"
-llm_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/model/Qwen2.5-1.5B-Instruct
-llm_dim=1536 #151936 #1536
-model_factory=model/ps-slm.py:model_factory # create your own model_factory
-run_decode_device=5 # run decode on certain device
+llm_path=/hpc_stor03/sjtu_home/jing.peng/nfs/model/qwen/Qwen/Qwen2___5-1___5B-Instruct # change this to your own path
+llm_dim=1536 #151936 #1536 3584
+model_factory=model/ps-slm.py:model_factory # u can also create your own model_factory
+run_decode_device=0  # run decode on certain device
 decode_log=$ckpt_path/decode_${dataset}_${task}_${split}
+
 python \
     $code_dir/inference_batch.py \
     hydra.run.dir=$ckpt_path \
@@ -52,6 +64,7 @@ python \
     ++model_config.encoder_projector_ds_rate=$encoder_projector_ds_rate \
     ++model_config.llm_path=$llm_path \
     ++model_config.llm_dim=$llm_dim \
+    ++model_config.llm_name=$llm_name \
     ++model_config.encoder_name=$encoder_name \
     ++model_config.encoder_path=$speech_encoder_path \
     ++model_config.encoder_dim=$encoder_dim \
@@ -74,8 +87,12 @@ python \
     ++train_config.voca_trans=$voca_trans \
     ++train_config.num_workers_dataloader=0 \
     ++train_config.output_dir=$output_dir \
+    ++train_config.use_fp16=$use_fp16 \
     ++decode_log=$decode_log \
     ++ckpt_path=$ckpt_path/pytorch_model.bin
+
+python clean_marks.py ${decode_log}_gt
+python clean_marks.py ${decode_log}_pred
 
 python utils/wenet_compute_cer.py --char=1 -v=1 ${decode_log}_gt ${decode_log}_pred > ${decode_log}_wer
 python utils/wenet_compute_cer.py --char=1 -v=1 ${decode_log}_gt ${decode_log}_pred > ${decode_log}_wer
