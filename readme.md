@@ -7,11 +7,12 @@ This repository contains the **core implementation** of the TASU algorithm.
 
 ## ⚙️ Environment Setup
 
-TASU is mainly developed and tested on **Huawei Ascend (910B) NPU clusters**, but can also be adapted to **NVIDIA GPU** environments.
+TASU is mainly developed and tested on **Huawei Ascend (910B) NPU clusters** (npu branch), but can also be adapted to **NVIDIA GPU** environments. You can use the dockerfile like:
 
-## Running on NVIDIA GPUs
-
-
+```bash
+# Build image from Dockerfile in the current directory
+docker build -t tasu:latest .
+``` 
 
 ---
 
