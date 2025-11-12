@@ -20,7 +20,8 @@ Audio format support:
 |----------|--------------|--------------|
 | plain wav | `/xxx/common_voice_en_19641841.wav` | direct `kaldiio.load_ark` |
 | ark offset | `/xxx/data_wav.1.ark:246511401` | binary `seek(offset)` |
-| flac | '/xxx/common_voice_en_19641841.flac' | torchaudio.load |
+| flac | `/xxx/common_voice_en_19641841.flac` | direct `torchaudio.load` |
+
 Data examples:
 ```bash
 {"key": "common_voice_en_211671", "task": "ASR", "target": "That is a weird phrase.", "path": "/data/audio/dev/common_voice_en_211671.wav"}
