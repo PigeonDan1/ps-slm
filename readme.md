@@ -68,7 +68,7 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
    
 5. One-Click Script:
    
-   After changing some essential local path and downloading models, you can run with:
+   After changing some essential local path and downloading models(**more detailed instruction in Multitask/readme**), you can run with:
    
    Core training script: `/scripts/finetune_deepspeed_sensevoice.sh`
 
