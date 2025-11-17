@@ -49,8 +49,8 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
 
    Data examples:
    ```bash
-   {"key": "common_voice_en_211671", "task": "ASR", "target": "That is a weird phrase.", "path": "/data/audio/dev/common_voice_en_211671.wav"}
-   {"key": "dev_75bc0c09", "task": "SLU_scenario", "target": "news", "path": "/data/slurp/wavs/dev_75bc0c09.wav"}
+   {"key": "common_voice_en_19315788", "task": "ASR", "target": "Raita also had feelings for her.", "GT": "raita also had feelings for her.", "path": "/aistor/sjtu/hpc_stor01/home/yangyi/data/common_voice/audio/dev/common_voice_en_19315788.wav"}
+   {"key": "common_voice_en_19685643", "task": "EN2ZH", "target": "第四个是 Benson and Hedges Championship。", "GT": "the fourth was the benson and hedges championship.", "path": "/aistor/sjtu/hpc_stor01/home/yangyi/data/covost2_en2zh_mls/audio/dev/common_voice_en_19685643.wav"}
    ```
    Tasks supported: ASR, EN2ZH, EN2DE, QA, SLU_scenario (SLURP).  
    (For more tasks, add corresponding prompts in `/conf/multiprompt.jsonl`.)
