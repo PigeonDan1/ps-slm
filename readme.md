@@ -38,7 +38,7 @@ Once your environment is ready (either Ascend NPU or NVIDIA GPU):
    | task   | string | ✔        | Task code (ASR, EN2ZH, etc.) |
    | target | string | ✔        | Text that the model must produce (label / decoding target) |
    | path   | string | ✔        | Audio location, 2 protocols supported, see below |
-   | GT     | string | ✘(✔)     | Audio GT for text-simulation CTC posterior |
+   | GT     | string | ✔(✘)     | Audio GT for text-simulation CTC posterior (If you want to train with audio, 'GT' would not be used)|
 
    Audio format support:
    
