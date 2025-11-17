@@ -96,8 +96,9 @@ class MultiTaskDataset(IterableDataset):
                     target = item["target"]
                     task = item["task"]
 
-                    # 这里加入 GT
                     raw = item.get("GT", "")
+                    if not raw:                       
+                        print("Lack audio groundtruth transcription in jsonl GT key!!!")
                     try:
                         GT = raw.encode("utf-8").decode("unicode_escape")
                     except Exception:
