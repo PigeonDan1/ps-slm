@@ -1,7 +1,9 @@
 # TASU: Text-only Alignment for Speech Understanding
 
-TASU (Text-only Alignment for Speech Understanding) is a newly proposed training paradigm for **Speech Large Language Models (Speech LLMs)**, with a primary focus on **semantic speech understanding**.  
-This repository contains the **core implementation** of the TASU algorithm.
+TASU (Text-only Alignment for Speech Understanding) is a newly proposed training paradigm for **Speech Large Language Models (Speech LLMs)**, with a primary focus on **semantic speech understanding**.  This repository contains the **core implementation** of the TASU algorithm.
+
+## 📰 News
+- **2026-01-18**: 🎉 Congrats to **TASU** (Text-only Alignment for Speech Understanding) on its acceptance to **ICASSP 2026**!  See you in Barcelona!
 
 ---
 ![TASU Overview](overview.png)
