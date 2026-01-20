@@ -1,0 +1,54 @@
+defaults:
+  - _self_
+
+model_config:
+  # 这里的 vocab_size 是文本输入的词表大小
+  # 代码中会通过 tokenizer.vocab_size 自动获取，这里给个默认值即可
+  vocab_size: 10000 
+  ctc_vocab_size: 25055
+  d_model: 512
+  n_head: 8
+  num_encoder_layers: 6
+  num_decoder_layers: 6
+  dim_feedforward: 2048
+  dropout: 0.1
+  max_len: 300
+
+dataset_config:
+  train_path: "/aistor/sjtu/hpc_stor01/home/yangyi/data/asr/GT/train/multitask.jsonl"
+  dev_path: "/aistor/sjtu/hpc_stor01/home/yangyi/data/asr/GT/dev/multitask.jsonl"
+  encoder_path: "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
+  tokenizer_path: "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
+
+train_config:
+  model_name: "ctc_simulator"
+  batch_size_per_gpu: 16
+  gradient_accumulation_steps: 1
+  lr: 0.0001
+  num_epochs: 20
+  num_workers_dataloader: 0
+  batching_strategy: "dynamic"
+  seed: 42
+  
+  run_validation: true
+  validation_interval: 1000
+  save_model: true
+  output_dir: "exp/simulator_v1"
+  dist_checkpoint_root_folder: "exp/simulator_v1"
+  dist_checkpoint_folder: "checkpoints"
+  
+  # 混合精度和分布式设置
+  use_fp16: true
+  enable_fsdp: false
+  enable_ddp: true
+  enable_deepspeed: true
+  run_test_during_validation: false
+
+log_config:
+  use_wandb: false
+  log_file: "exp/simulator_v1/train.log"
+  log_interval: 50
+  wandb_dir: "exp/simulator_v1/wandb"
+  wandb_entity_name: "your_entity"
+  wandb_project_name: "tasu_simulator"
+  wandb_exp_name: "simulator_run_01"
