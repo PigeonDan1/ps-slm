@@ -20,6 +20,11 @@ cd $run_dir || exit 1
 
 INPUT_JSONL="${run_dir}/data/train/multitask.jsonl"
 OUT_DIR="${run_dir}/data/tempResult/reconstruction_train"
+# MBR路径
+CHECKPOINT_PATH="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar_control_feedback_fromAR_20260112-1815/checkpoints/step_14287/pytorch_model.bin/pytorch_model.bin"
+# 无反馈路径
+# CHECKPOINT_PATH="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar_control/checkpoints/pytorch_model.bin"
+MAX_SAMPLES=2000
 
 echo "=========================================================="
 echo "--> Starting Reconstruction Test (Fitting Check)"
@@ -40,6 +45,8 @@ for rank in "${!NPU_IDS[@]}"; do
         --rank $rank \
         --world_size $WORLD_SIZE \
         --device_id $NPU \
+        --checkpoint_path "$CHECKPOINT_PATH" \
+        --max_samples "$MAX_SAMPLES" \
         --input_jsonl "$INPUT_JSONL" \
         --output_dir "$OUT_DIR" \
         --use_reconstruction_mode & 

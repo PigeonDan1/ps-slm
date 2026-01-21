@@ -13,7 +13,6 @@ from simulator.config import SimulatorConfig
 from model.tokenizer import SenseVoiceTokenizer
 
 # ================= 配置 =================
-CHECKPOINT_PATH = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar_control/checkpoints/pytorch_model.bin"
 TOKENIZER_PATH = "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
 BATCH_SIZE = 16 
 TOP_K_SPARSE = 10 
@@ -114,7 +113,9 @@ def main():
     parser.add_argument("--device_id", type=int, required=True)
     parser.add_argument("--input_jsonl", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    # 保持旧参数兼容，若非重构模式则使用它们
+    parser.add_argument("--checkpoint_path", type=str, required=True)
+    parser.add_argument("--max_samples", type=int, default=-1)
+    # 保持旧参数兼容
     parser.add_argument("--s_rate", type=float, default=0.0)
     parser.add_argument("--d_rate", type=float, default=0.0)
     parser.add_argument("--i_rate", type=float, default=0.0)
@@ -131,7 +132,7 @@ def main():
     model = CTCTransformerSimulator(CONFIG)
     
     # 加载模型
-    sd = torch.load(CHECKPOINT_PATH, map_location='cpu')
+    sd = torch.load(args.checkpoint_path, map_location='cpu')
     model.load_state_dict({k.replace("simulator.", "").replace("module.", ""): v for k, v in sd.items()})
     model.to(device).eval()
 
@@ -139,7 +140,10 @@ def main():
     global_cond = torch.tensor([args.s_rate, args.d_rate, args.i_rate, args.wer], device=device).unsqueeze(0)
 
     with open(args.input_jsonl, 'r', encoding='utf-8') as f:
-        lines = f.readlines()[args.rank::args.world_size]
+        full_lines = f.readlines()
+    if args.max_samples > 0:
+        lines = full_lines[:args.max_samples]
+    lines = lines[args.rank::args.world_size]
     
     dataset = InferenceDataset(lines, use_reconstruction_mode=args.use_reconstruction_mode)
     loader = DataLoader(dataset, batch_size=BATCH_SIZE, collate_fn=collate_fn, num_workers=4)

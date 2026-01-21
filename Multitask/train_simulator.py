@@ -297,7 +297,7 @@ def main(kwargs: DictConfig):
             use_mbr = getattr(model_config, "use_mbr", True)
             mbr_lambda = getattr(model_config, "mbr_lambda", 2.0)
             mbr_tau = getattr(model_config, "mbr_tau", 0.8)
-            mbr_k = getattr(model_config, "mbr_k", 4)
+            mbr_k = getattr(model_config, "mbr_k", 3)
 
             if use_mbr:
                 raw_model = model_engine.module.simulator if hasattr(model_engine.module, "simulator") else model_engine.module
@@ -368,7 +368,8 @@ def main(kwargs: DictConfig):
                 # ============================================
                 
                 # loss = loss_mbr # 暂时微调使用纯penalty
-                loss = loss_ce + mbr_lambda * loss_mbr
+                loss = loss_mbr
+                # loss = loss_ce + mbr_lambda * loss_mbr
                 penalty_log = r_matrix.mean()
             else:
                 loss = loss_ce

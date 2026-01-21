@@ -13,7 +13,7 @@ from simulator.config import SimulatorConfig
 from model.tokenizer import SenseVoiceTokenizer
 
 # ================= 配置 =================
-CHECKPOINT_PATH = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar_control/checkpoints/pytorch_model.bin"
+CHECKPOINT_PATH = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar_control_feedback_fromAR_20260112-1815/checkpoints/step_14287/pytorch_model.bin/pytorch_model.bin"
 TOKENIZER_PATH = "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
 BATCH_SIZE = 16 
 TOP_K_SPARSE = 10 

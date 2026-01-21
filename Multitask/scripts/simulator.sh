@@ -31,7 +31,7 @@ grad_accum=1
 lr=0.00005
 val_interval=1099
 
-exp_tag="ar_control_feedback_fromAR" 
+exp_tag="ar_control_feedback_fromAR_PureMBR" 
 output_dir="${code_dir}/exp/simulator_${exp_tag}_$(date +"%Y%m%d-%H%M")"
 mkdir -p $output_dir
 

@@ -5,7 +5,7 @@ import matplotlib.pyplot as plt
 # =========================
 # 1. 读取日志（改成你的日志文件）
 # =========================
-log_file = "exp/simulator_ar_control_feedback_20260101-2137/train.log"  # 或直接把日志内容写成字符串
+log_file = "exp/simulator_ar/train.log"  # 或直接把日志内容写成字符串
 
 with open(log_file, "r") as f:
     lines = f.readlines()

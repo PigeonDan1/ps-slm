@@ -130,13 +130,13 @@ def main():
     calc = Calculator()
     
     # 每个桶初始化统计量
-    # 格式: {bucket_idx: {"st_b": stats, "st_w": stats, "target_wer_sum": 0.0, "count": 0}}
     stats_buckets = []
     for _ in BUCKETS:
         stats_buckets.append({
             "st_b": {'all': 0, 'cor': 0, 'sub': 0, 'ins': 0, 'del': 0},
             "st_w": {'all': 0, 'cor': 0, 'sub': 0, 'ins': 0, 'del': 0},
             "target_wer_sum": 0.0,
+            "sq_error_sum": 0.0,  # 新增：用于计算 RMSE
             "count": 0
         })
 
@@ -158,11 +158,15 @@ def main():
         bucket["count"] += 1
         bucket["target_wer_sum"] += target_wer
 
-        # 1. BPE 级别计算 (复用逻辑)
+        # 1. BPE 级别计算
         rb = calc.calculate(ref_b, hyp_b)
         for k in bucket["st_b"]: bucket["st_b"][k] += rb[k]
+        
+        # 计算单个样本的 BPE WER 用于 RMSE
+        current_bpe_wer = (rb['sub'] + rb['del'] + rb['ins']) / (rb['all'] + 1e-6)
+        bucket["sq_error_sum"] += (current_bpe_wer - target_wer) ** 2
 
-        # 2. Word 级别计算 (复用逻辑)
+        # 2. Word 级别计算
         gt_text = item.get('GT', item.get('target', ''))
         hyp_text = tokenizer.decode(hyp_b)
         lab_w = normalize_standard(characterize(gt_text))
@@ -171,32 +175,30 @@ def main():
         for k in bucket["st_w"]: bucket["st_w"][k] += rw[k]
 
     # 打印结果
-    print("\n" + "="*80)
-    print(f"{'Bucket Range':<20} | {'Count':<6} | {'Tgt WER':<8} | {'BPE WER':<8} | {'Word WER':<8} | {'Bias (BPE)':<8}")
-    print("-" * 80)
+    header = f"{'Bucket Range':<20} | {'Count':<5} | {'TgtWER':<7} | {'BPE_WER':<7} | {'Bias':<7} | {'RelBias':<8} | {'RMSE':<7}"
+    print("\n" + "=" * len(header))
+    print(header)
+    print("-" * len(header))
 
     for i, (low, high, label) in enumerate(BUCKETS):
         b = stats_buckets[i]
         if b["count"] == 0:
-            print(f"{label:<20} | 0      | N/A      | N/A      | N/A      | N/A")
+            print(f"{label:<20} | 0     | N/A     | N/A     | N/A     | N/A      | N/A")
             continue
 
-        avg_target = (b["target_wer_sum"] / b["count"]) * 100
+        avg_target = (b["target_wer_sum"] / b["count"])
         
-        # 计算 BPE 
+        # BPE WER (Clean: sub+del+ins)
         nb = b["st_b"]['all']
-        bpe_wer = (nb_sum := (nb_err := nb - b["st_b"]['cor'] + b["st_b"]['ins'])) / (nb + 1e-6) * 100 if nb > 0 else 0
-        # 严格对应 SDI 计算: (sub+del+ins)/all
-        bpe_wer_clean = (b["st_b"]['sub'] + b["st_b"]['del'] + b["st_b"]['ins']) / (nb + 1e-6) * 100
-
-        # 计算 Word
-        nw = b["st_w"]['all']
-        word_wer = (b["st_w"]['sub'] + b["st_w"]['del'] + b["st_w"]['ins']) / (nw + 1e-6) * 100
+        bpe_wer_clean = (b["st_b"]['sub'] + b["st_b"]['del'] + b["st_b"]['ins']) / (nb + 1e-6)
 
         bias = bpe_wer_clean - avg_target
-        print(f"{label:<20} | {b['count']:<6} | {avg_target:>7.2f}% | {bpe_wer_clean:>7.2f}% | {word_wer:>7.2f}% | {bias:>+7.2f}%")
+        rel_bias = bias / (avg_target + 1e-6)
+        rmse = np.sqrt(b["sq_error_sum"] / b["count"])
 
-    print("="*80)
+        print(f"{label:<20} | {b['count']:<5} | {avg_target*100:>6.2f}% | {bpe_wer_clean*100:>6.2f}% | {bias*100:>+6.2f}% | {rel_bias*100:>+7.2f}% | {rmse*100:>6.2f}%")
+
+    print("=" * len(header))
 
 if __name__ == "__main__":
     main()
