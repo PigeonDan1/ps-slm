@@ -350,15 +350,16 @@ class CTCTransformerSimulator(nn.Module):
             combined_soft_features.append(soft_feat)
             combined_masks.append(seq_mask)
 
+        # --- 核心修正：使用 stack + view 确保排列顺序对齐 [S0_P0, S0_P1, S1_P0, S1_P1...] ---
         # [B*K, T, D]
-        batch_soft_feat = torch.cat(combined_soft_features, dim=0)
+        batch_soft_feat = torch.stack(combined_soft_features, dim=1).view(B * K, max_t, -1)
         # [B*K, T]
-        batch_ids = torch.cat(combined_ids, dim=0)
+        batch_ids = torch.stack(combined_ids, dim=1).view(B * K, -1)
         # [B*K, T]
-        batch_masks = torch.cat(combined_masks, dim=0)
+        batch_masks = torch.stack(combined_masks, dim=1).view(B * K, -1)
         
         # 2. 扩展 Memory 以匹配 B*K
-        # memory: [B, L, D] -> [B*K, L, D]
+        # memory: [B, L, D] -> [B*K, L, D] (顺序: S0, S0, S1, S1...)
         expanded_memory = memory.repeat_interleave(K, dim=0)
         expanded_mem_mask = memory_mask.repeat_interleave(K, dim=0)
 
@@ -373,6 +374,7 @@ class CTCTransformerSimulator(nn.Module):
         target_log_probs = torch.gather(log_softmax, dim=-1, index=batch_ids.unsqueeze(-1)).squeeze(-1)
         
         # 掩码求和并恢复维度 [B, K]
+        # 这里的 .view(B, K) 会正确地将 [S0_P0, S0_P1, S1_P0, S1_P1] 还原回 [B, K]
         final_log_probs = (target_log_probs * batch_masks).sum(dim=1)
         return final_log_probs.view(B, K)
 
