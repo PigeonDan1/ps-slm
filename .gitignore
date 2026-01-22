@@ -2,9 +2,9 @@ kernel_meta/
 tmp/
 Multitask/.hydra/
 fusion_result.json
-dockerfile
 Multitask/data/
 ckpt_audio/
 ckpt_text/
 Multitask/my_local_hostfile
 Multitask/logs
+*.png
