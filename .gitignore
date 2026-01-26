@@ -3,8 +3,11 @@ tmp/
 Multitask/.hydra/
 fusion_result.json
 Multitask/data/
+dockerfile
 ckpt_audio/
 ckpt_text/
 Multitask/my_local_hostfile
 Multitask/logs
 *.png
+data
+audiomentations/demo

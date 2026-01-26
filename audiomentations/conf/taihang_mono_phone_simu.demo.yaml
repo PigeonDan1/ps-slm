@@ -1,0 +1,56 @@
+input_scp: example/data/clean/concat_wav.scp
+output_dir: example/data/example_concat
+archive: true
+transforms:
+  - name: volume_perturb
+    choices:
+      - -20
+      - -20 
+      - -20
+      - -25
+      - -25
+      - -30
+      - -35
+      - -40
+      - -45
+    p: 1.0
+  - name: concat
+  - name: mutually_exclusive_group
+    transforms:
+      - name: resample
+      - name: pitch_perturb
+      - name: speed_perturb
+        min_rate: 0.9
+        max_rate: 1.1
+    p:
+      - 0.1
+      - 0.1
+      - 0.1
+  - name: dump
+    suffix: pre
+    dump_dir: example/data/example_concat_pre
+  - name: apply_impluse_response
+    ir_path: /hpc_stor01/group/on_device/work23/taihang/rir_info/RIR_2mic30mm.wavlist
+    ir_num_channel: 2
+  - name: pad_silence
+    time_padding:
+      - 5
+      - 0
+  - name: add_background_noise
+    min_snr_in_db: 0
+    max_snr_in_db: 15
+    sounds_path: /hpc_stor01/group/on_device/work23/taihang/noise_info/noise_2mic30mm.wavlist
+  - name: pad_silence
+    channel_padding:
+      - 0
+      - 1
+  - name: ssp
+    version: /hpc_stor01/group/on_device/gtools/th_release/th2_alg/v1.4.2/
+    lib_path: /hpc_stor01/group/on_device/work23/taihang/ssp_tool/gsc/bin/2mic_30mm_1ref/libth_alg_1ref.so
+    res_path: /hpc_stor01/group/on_device/work23/taihang/ssp_tool/gsc/bin/2mic_30mm_1ref/res.bin
+  - name: select_beam
+    rir_beam_path: /hpc_stor01/group/on_device/work23/taihang/rir_info/RIR_2mic30mm.beam
+  - name: time_trim
+    trim:
+      - 5
+      - 0

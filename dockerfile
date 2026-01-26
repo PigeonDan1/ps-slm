@@ -1,4 +1,4 @@
-FROM hub.szaic.com/sjtu-base/sjtu_base-pytorch-for-ascend:cann8.0.0-torch2.1.0-py3.10
+FROM hub.szaic.com/hpc-base/ai_base-pytorch-for-ascend:cann8.0.0-torch2.1.0-py3.10
 
 USER root
 

@@ -1,0 +1,55 @@
+import subprocess
+from typing import List
+import numpy as np
+
+from audiomentations.core.transforms_interface import add_transform
+from ..base import PostProcess
+
+
+@add_transform('cstub_gsc')
+class CstubGSC(PostProcess):
+
+    def __init__(self, p=1.0, gsc_bin=None, gsc_args:List=None):
+        super().__init__(p=p)
+        self.gsc_bin ='/mnt/lustre02/jiangsu/aispeech/home/hl219/tools/taihang/fespl_tools/20210810/test_gsc'
+        if gsc_bin:
+            self.gsc_bin = gsc_bin
+        self.gsc_args = gsc_args
+
+    """Use CSTUB GSC tools to process wav. only support 2-mic wav
+    """
+    supports_mono = False
+    supports_multichannel = True
+
+    def randomize_parameters(self, samples, sample_rate, accumulate_meta=None):
+        super().randomize_parameters(samples, sample_rate, accumulate_meta=accumulate_meta)
+
+    def apply(self, samples, sample_rate):
+        channel, ilen = samples.shape
+        assert channel == 2 or channel == 4, f'GSC 2mic or 4mic support only, get wav shape {samples.shape}'
+        assert sample_rate == 16000, f'GSC sr 16000 support only, get {sample_rate}'
+        # args: aec_pFilterFlag, outGain, taps
+        args = [self.gsc_bin]
+        if self.gsc_args:
+            args += [ str(arg) for arg in self.gsc_args]
+        proc = subprocess.Popen(args=args,
+                                stdin=subprocess.PIPE,
+                                stdout=subprocess.PIPE,
+                                stderr=subprocess.PIPE)
+
+        # cstub gsc will padding 256 zeros before samples
+        # cstub aec will drop the last frame samples when < 256 (FFT=512)
+        # so padding to multiples of 256 for no sample clip
+        # and padding half frame for aec shift
+        padding_zeros = 256 + int(np.ceil(ilen / 256)) * 256 - ilen
+        samples = np.pad(samples, ((0, 0), (0, padding_zeros)), mode='constant')
+        wav = (samples * 2**15).astype(np.int16).transpose()
+        try:
+            outs, _ = proc.communicate(input=wav.tobytes(), timeout=30)
+        except subprocess.TimeoutExpired as e:
+            proc.kill()
+            raise UserWarning('CSTUB AEC timeout, kill the subprocess!') from e
+
+        # cstub gsc will drop the last frame samples when < 512 (FFT=1024)
+        samples = np.frombuffer(outs, dtype='int16').reshape(-1, 4).transpose() / 2**15
+        return samples.astype(np.float32)[:, 256:256+ilen]
