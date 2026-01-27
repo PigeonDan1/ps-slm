@@ -4,11 +4,11 @@ import os
 from collections import Counter
 from tqdm import tqdm
 
-ORIGINAL_JSONL = "data/dev/multitask.jsonl"
-AUGMENTED_JSONL = "data/dev/multitask_augmented.jsonl"
+# ORIGINAL_JSONL = "data/dev/multitask.jsonl"
+# AUGMENTED_JSONL = "data/dev/multitask_augmented.jsonl"
 
-# ORIGINAL_JSONL = "data/train/multitask.jsonl"
-# AUGMENTED_JSONL = "data/train/multitask_augmented.jsonl"
+ORIGINAL_JSONL = "data/train/multitask.jsonl"
+AUGMENTED_JSONL = "data/train/multitask_augmented.jsonl"
 def get_bucket_id(wer):
     """根据项目定义的 WER 区间进行分桶"""
     if wer < 0.05: return 1
