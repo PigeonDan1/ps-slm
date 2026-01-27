@@ -1,5 +1,0 @@
-.vscode
-*.pyc
-__pycache__
-slurm
-example/data/augment_base

@@ -1,5 +1,0 @@
-input_scp: example/data/clean/wav.scp
-output_dir: example/data/augment_base
-transforms:
-  - name: pitch_perturb
-  - name: speed_perturb

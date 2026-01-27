@@ -10,6 +10,7 @@ import re
 from tqdm import tqdm
 import deepspeed
 import torch.distributed as dist
+import pt
 
 # 必须安装 kaldiio: pip install kaldiio
 try:
@@ -22,13 +23,13 @@ from model.tokenizer import SenseVoiceTokenizer
 from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
 
 # ================= 配置 =================
-BASE_WORK_DIR = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask"
+BASE_WORK_DIR = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask"
 OUTPUT_DATA_DIR = os.path.join(BASE_WORK_DIR, "data")
 SOURCE_FILES = {
-    "test-clean": "/aistor/sjtu/hpc_stor01/home/yangyi/data/asr/test-clean/multitask.jsonl",
-    "test-other": "/aistor/sjtu/hpc_stor01/home/yangyi/data/asr/test-other/multitask.jsonl"
+    "train": "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/train/multitask.jsonl",
+    "dev": "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/dev/multitask.jsonl"
 }
-MODEL_PATH = "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
+MODEL_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
 BLANK_THRESHOLD = 0.90
 TOP_K = 10 
 
@@ -88,6 +89,7 @@ def main():
     frontend = model_kwargs.get("frontend")
     tokenizer = SenseVoiceTokenizer(MODEL_PATH)
     
+    # 确保模型加载完毕后再开始后续操作
     dist.barrier()
 
     for split, jsonl_path in SOURCE_FILES.items():
@@ -95,6 +97,9 @@ def main():
         if rank == 0:
             os.makedirs(split_dir, exist_ok=True)
             print(f"--> [Rank 0] Processing split: {split}", flush=True)
+        
+        # [新增] 增加同步点，确保 Rank 0 创建完目录后，其他 Rank 再开始写文件
+        dist.barrier()
         
         with open(jsonl_path, 'r', encoding='utf-8') as f:
             all_lines = f.readlines()
@@ -109,7 +114,6 @@ def main():
                     item = json.loads(line.strip())
                     audio_path = item['path']
                     
-                    # 使用灵活加载函数
                     waveform, sr = load_audio_flexible(audio_path)
                     if sr != 16000:
                         waveform = torchaudio.transforms.Resample(sr, 16000)(waveform)
@@ -118,10 +122,9 @@ def main():
                     input_f, input_l = extract_fbank(audio_list, data_type="sound", frontend=frontend)
                     
                     with torch.no_grad():
-                        # ASR Prompt
                         l_q = model.embed(torch.tensor([[0]], device=device))
                         e_q = model.embed(torch.tensor([[1, 2]], device=device))
-                        t_q = model.embed(torch.tensor([[1]], device=device)) # TextNorm=1
+                        t_q = model.embed(torch.tensor([[1]], device=device)) 
                         
                         speech_in = torch.cat([l_q, e_q, t_q, input_f.to(device)], dim=1)
                         encoder_out, _ = model.encoder(speech_in, input_l.to(device) + 4)
@@ -152,21 +155,88 @@ def main():
                     })
                     out_f.write(json.dumps(item, ensure_ascii=False) + "\n")
                 except Exception as e:
-                    # 打印报错，方便观察
-                    # print(f"Error on {item.get('key')}: {e}")
+                    # 建议：至少在日志中记录错误，以便排查为什么文件全空
+                    print(f"Error on {item.get('key')}: {e}")
                     continue
 
+    # 确保所有进程都完成了数据处理并关闭了文件
     dist.barrier()
+
     if rank == 0:
         for split in SOURCE_FILES:
-            final_jsonl = os.path.join(OUTPUT_DATA_DIR, split, "multitask.jsonl")
-            with open(final_jsonl, 'w') as f_out:
+            split_dir = os.path.join(OUTPUT_DATA_DIR, split)
+            
+            # --- [新增] 严格预检查阶段 ---
+            print(f"--> [Rank 0] Validating temp files for {split}...")
+            for r in range(world_size):
+                tmp = os.path.join(split_dir, f"temp_rank{r}.jsonl")
+                if not os.path.exists(tmp):
+                    raise RuntimeError(f"Critical Error: Temp file {tmp} missing!")
+                
+                with open(tmp, 'r', encoding='utf-8') as f_check:
+                    first_line = f_check.readline()
+                    if not first_line or not first_line.strip():
+                        # 发现空文件，直接抛出异常退出，不再合并
+                        raise RuntimeError(f"Critical Error: Temp file {tmp} is EMPTY. Processing might have failed for all samples on this rank.")
+                    
+                    try:
+                        valid_item = json.loads(first_line)
+                        if 'psd_path' not in valid_item:
+                            raise RuntimeError(f"Critical Error: Invalid data format in {tmp}. Missing 'psd_path'.")
+                    except json.JSONDecodeError:
+                        raise RuntimeError(f"Critical Error: {tmp} contains invalid JSON.")
+            
+            # --- [修改] 只有检查通过后才开始合并 ---
+            final_jsonl = os.path.join(split_dir, "multitask.jsonl")
+            print(f"--> [Rank 0] Validation passed. Merging to {final_jsonl}...")
+            with open(final_jsonl, 'w', encoding='utf-8') as f_out:
                 for r in range(world_size):
-                    tmp = os.path.join(OUTPUT_DATA_DIR, split, f"temp_rank{r}.jsonl")
-                    if os.path.exists(tmp):
-                        with open(tmp, 'r') as f_tmp: f_out.write(f_tmp.read())
-                        os.remove(tmp)
-        print("--> All Done.", flush=True)
+                    tmp = os.path.join(split_dir, f"temp_rank{r}.jsonl")
+                    with open(tmp, 'r', encoding='utf-8') as f_tmp:
+                        f_out.write(f_tmp.read())
+                    os.remove(tmp)
+        print("--> All Done. Files merged successfully.", flush=True)
+
+def add_wer_info():
+    calc = pt.Calculator() # 使用 pt.py 中的计算器
+    
+    for split, input_path in SOURCE_FILES.items():
+        if not os.path.exists(input_path):
+            print(f"Skipping {split}: file not found at {input_path}")
+            continue
+            
+        # 安全起见，输出到新文件
+        output_path = input_path.replace(".jsonl", "_with_wer.jsonl")
+        print(f"\n--> Processing {split} | Output: {output_path}")
+        
+        with open(input_path, 'r', encoding='utf-8') as f_in, \
+             open(output_path, 'w', encoding='utf-8') as f_out:
+            
+            for line in tqdm(f_in):
+                item = json.loads(line.strip())
+                psd_path = item.get('psd_path')
+                
+                if psd_path and os.path.exists(psd_path):
+                    # 调用 pt.py 修复后的 restore_ids
+                    hyp, ref = pt.restore_ids(psd_path)
+                    
+                    if hyp is not None and ref is not None:
+                        # 计算 BPE 级别的 SDI 统计
+                        res = calc.calculate(ref, hyp)
+                        n = res['all']
+                        
+                        # 构造符合 dataset.py 预期的 bpe_error 结构
+                        item['bpe_error'] = {
+                            "RefLen": n,
+                            "S": res['sub'],
+                            "D": res['del'],
+                            "I": res['ins'],
+                            "WER": (res['sub'] + res['del'] + res['ins']) / n if n > 0 else 0.0
+                        }
+                
+                # 写入新文件
+                f_out.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 if __name__ == "__main__":
-    main()
+    # main()
+    add_wer_info()

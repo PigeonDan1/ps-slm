@@ -15,10 +15,10 @@ run_dir=$(cd $(dirname $0)/..; pwd)
 cd $run_dir || exit 1
 code_dir=.
 
-DATA_ROOT="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data"
+DATA_ROOT="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data"
 train_data_path="${DATA_ROOT}/train/multitask.jsonl"
 dev_data_path="${DATA_ROOT}/dev/multitask.jsonl"
-tokenizer_path="/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
+tokenizer_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
 
 # 训练权重路径
 ckpt_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar/checkpoints/step_61000/pytorch_model.bin/pytorch_model.bin"
@@ -31,7 +31,7 @@ grad_accum=1
 lr=0.00005
 val_interval=1099
 
-exp_tag="ar_control_feedback_fromAR_PureMBR" 
+exp_tag="ar_control_augmentation" 
 output_dir="${code_dir}/exp/simulator_${exp_tag}_$(date +"%Y%m%d-%H%M")"
 mkdir -p $output_dir
 
