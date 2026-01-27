@@ -16,19 +16,18 @@ cd $run_dir || exit 1
 code_dir=.
 
 DATA_ROOT="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data"
-train_data_path="${DATA_ROOT}/train/multitask.jsonl"
-dev_data_path="${DATA_ROOT}/dev/multitask.jsonl"
+train_data_path="${DATA_ROOT}/train/multitask_augmented.jsonl"
+dev_data_path="${DATA_ROOT}/dev/multitask_augmented.jsonl"
 tokenizer_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
 
 # 训练权重路径
-ckpt_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar/checkpoints/step_61000/pytorch_model.bin/pytorch_model.bin"
-
-model_name="ctc_simulator_ar_control" 
-num_epochs=15
+ckpt_path=""
+model_name="ctc_simulator_ar_control_augmentedData" 
+num_epochs=50
 batch_size_per_gpu=32 
 val_batch_size=32
 grad_accum=1
-lr=0.00005
+lr=1e-4
 val_interval=1099
 
 exp_tag="ar_control_augmentation" 

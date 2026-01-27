@@ -60,55 +60,34 @@ class SimulatorDataset(Dataset):
         dense_text.scatter_(1, t_ids, 1.0)
         return dense_text
 
-    def _normalize_sdi_stats(self, bpe_error: Dict) -> torch.Tensor:
-        if not bpe_error:
-            return torch.zeros(4, dtype=torch.float32)
-            
-        ref_len = bpe_error.get("RefLen", 0)
-        if ref_len <= 0: ref_len = 1.0 
-            
-        s = bpe_error.get("S", 0)
-        d = bpe_error.get("D", 0)
-        i = bpe_error.get("I", 0)
-        wer = bpe_error.get("WER", 0.0)
-        
-        s_rate = s / ref_len
-        d_rate = d / ref_len
-        i_rate = i / ref_len
-        
-        return torch.tensor([s_rate, d_rate, i_rate, wer], dtype=torch.float32)
-
     def __getitem__(self, idx: int) -> Dict[str, Any]:
         item = self.data[idx]
         pt_path = item['psd_path']
         
         try:
             data = torch.load(pt_path, map_location='cpu')
-            psd_tensor = self._restore_psd_matrix(data['psd_indices'], data['psd_values'])
-            
-            # [功能保持] 使用 data['text_ids'] 生成 onehot
+
             text_tensor = self._restore_text_onehot(data['text_ids'])
-            
-            # [核心新增] 获取原始 text_ids 并进行长度截断，确保与 onehot 对齐
-            raw_text_ids = data['text_ids']
-            if raw_text_ids.shape[0] > self.max_len:
-                raw_text_ids = raw_text_ids[:self.max_len]
-            # 转为 LongTensor 以供后续编辑距离计算
-            text_ids_tensor = torch.from_numpy(raw_text_ids.astype(np.int64))
-            
-            error_stats = self._normalize_sdi_stats(item.get("bpe_error", None))
-            
-            if psd_tensor.size(0) > self.max_len:
-                psd_tensor = psd_tensor[:self.max_len, :]
-            
             if text_tensor.size(0) > self.max_len:
                 text_tensor = text_tensor[:self.max_len, :]
             
+            raw_text_ids = data['text_ids']
+            if raw_text_ids.shape[0] > self.max_len:
+                raw_text_ids = raw_text_ids[:self.max_len]
+            # 转为 LongTensor
+            text_ids_tensor = torch.from_numpy(raw_text_ids.astype(np.int64))
+
+            psd_tensor = self._restore_psd_matrix(data['psd_indices'], data['psd_values'])
+            if psd_tensor.size(0) > self.max_len:
+                psd_tensor = psd_tensor[:self.max_len, :]           
+            
+            bucket_id = item.get("bucket_id", 1)
+                        
             return {
                 "text_onehot": text_tensor,      
-                "text_ids": text_ids_tensor,     # [新增] 返回原始 ID 序列
+                "text_ids": text_ids_tensor,     # 返回原始ID序列便于监控
                 "target_psd": psd_tensor,        
-                "error_stats": error_stats,      
+                "bucket_id": bucket_id,      
                 "key": item.get("key", str(idx))
             }
             
@@ -131,23 +110,21 @@ class SimulatorCollate:
         if not batch: return {}
 
         text_list = [item["text_onehot"] for item in batch]
-        # [核心新增] 提取 text_ids 列表
-        text_ids_list = [item["text_ids"] for item in batch]
-        
+        text_ids_list = [item["text_ids"] for item in batch]        
         target_list = [item["target_psd"] for item in batch]
-        error_stats_list = [item["error_stats"] for item in batch]
+
+        bucket_id_list = [item["bucket_id"] for item in batch]
         
         text_lens = torch.tensor([t.size(0) for t in text_list], dtype=torch.long)
         target_lens = torch.tensor([t.size(0) for t in target_list], dtype=torch.long)
         
-        text_padded = pad_sequence(text_list, batch_first=True, padding_value=0.0)
-        
-        # [核心新增] 对 text_ids 进行 Padding
+        text_padded = pad_sequence(text_list, batch_first=True, padding_value=0.0)        
+        # 对 text_ids 进行 Padding
         # 使用 25055 (EOS) 作为填充值，这在 pt.py 的比对逻辑中会被自动过滤，不影响计算
-        text_ids_padded = pad_sequence(text_ids_list, batch_first=True, padding_value=25055)
-        
+        text_ids_padded = pad_sequence(text_ids_list, batch_first=True, padding_value=25055)       
         target_padded = pad_sequence(target_list, batch_first=True, padding_value=0.0)
-        error_stats_batch = torch.stack(error_stats_list)
+
+        bucket_id_batch = torch.stack(bucket_id_list)
         
         B_text, L_text, _ = text_padded.size()
         text_seq_range = torch.arange(L_text).unsqueeze(0).expand(B_text, -1)
@@ -159,11 +136,11 @@ class SimulatorCollate:
 
         return {
             "text_onehot": text_padded,
-            "text_ids": text_ids_padded, # [新增] 将 Padding 后的 ID 序列存入 batch
+            "text_ids": text_ids_padded,
             "text_mask": text_mask,
             "target_psd": target_padded,
             "target_lengths": target_lens,
             "loss_mask": loss_mask,
-            "error_stats": error_stats_batch,
+            "bucket_id": bucket_id_batch,
             "keys": [item["key"] for item in batch]
         }

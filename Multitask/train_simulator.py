@@ -48,84 +48,6 @@ torch_npu.npu.config.allow_internal_format = False
 
 logger = logging.getLogger(__name__)
 
-# 用于反馈计算WER
-class Calculator:
-    def __init__(self):
-        self.space = []
-        self.cost = {'cor': 0, 'sub': 1, 'del': 1, 'ins': 1}
-
-    def calculate(self, lab_raw, rec_raw):
-        # 严格对齐 pt.py 逻辑：转为字符串比对
-        lab = [str(x) for x in lab_raw]
-        rec = [str(x) for x in rec_raw]
-        lab.insert(0, ''); rec.insert(0, '')
-        
-        # 动态扩展矩阵空间
-        while len(self.space) < len(lab): self.space.append([])
-        for row in self.space:
-            while len(row) < len(rec): row.append({'dist': 0, 'error': 'non'})
-            
-        # 初始化边界
-        for i in range(len(lab)): self.space[i][0]['dist'] = i; self.space[i][0]['error'] = 'del'
-        for j in range(len(rec)): self.space[0][j]['dist'] = j; self.space[0][j]['error'] = 'ins'
-        self.space[0][0]['error'] = 'non'
-        
-        for i in range(1, len(lab)):
-            for j in range(1, len(rec)):
-                min_dist = sys.maxsize
-                d = self.space[i-1][j]['dist'] + self.cost['del']
-                if d < min_dist: min_dist, err = d, 'del'
-                d = self.space[i][j-1]['dist'] + self.cost['ins']
-                if d < min_dist: min_dist, err = d, 'ins'
-                c = self.cost['cor'] if lab[i] == rec[j] else self.cost['sub']
-                d = self.space[i-1][j-1]['dist'] + c
-                if d < min_dist: min_dist, err = d, ('cor' if lab[i] == rec[j] else 'sub')
-                self.space[i][j]['dist'] = min_dist; self.space[i][j]['error'] = err
-        
-        # 回溯 SDI 指标
-        res = {'all': 0, 'cor': 0, 'sub': 0, 'ins': 0, 'del': 0}
-        i, j = len(lab)-1, len(rec)-1
-        while True:
-            op = self.space[i][j]['error']
-            if op == 'cor': res['all'] += 1; res['cor'] += 1; i -= 1; j -= 1
-            elif op == 'sub': res['all'] += 1; res['sub'] += 1; i -= 1; j -= 1
-            elif op == 'del': res['all'] += 1; res['del'] += 1; i -= 1
-            elif op == 'ins': res['ins'] += 1; j -= 1
-            else: break
-        return res
-
-def compute_batch_penalty(sampled_ids_list, batch_text_ids, error_stats, calculator):
-    """
-    sampled_ids_list: List[Tensor], 长度为 K, 每个 Tensor 维度 [B, T_k]
-    返回: [B, K] 的张量，记录每条路径的 SDI 偏差 (常数)
-    """
-    B = batch_text_ids.size(0)
-    K = len(sampled_ids_list)
-    penalties = torch.zeros(B, K)
-    
-    for k in range(K):
-        gen_ids = sampled_ids_list[k]
-        for i in range(B):
-            hyp = [x.item() for x in gen_ids[i] if x != 0 and x != 25055]
-            ref = [x.item() for x in batch_text_ids[i] if x != 0 and x != 25055]
-            
-            res = calculator.calculate(ref, hyp)
-            n = res['all']
-            if n == 0:
-                penalties[i, k] = 0.0
-                continue
-                
-            actual_stats = [
-                res['sub'] / n, res['del'] / n, res['ins'] / n, 
-                (res['sub'] + res['del'] + res['ins']) / n
-            ]
-            target_stats = error_stats[i].cpu().numpy()
-            
-            # 计算 SDI + WER 的总绝对偏差
-            dev = sum(abs(a - t) for a, t in zip(actual_stats, target_stats))
-            penalties[i, k] = dev
-            
-    return penalties
 
 @dataclass
 class RunConfig:
@@ -215,16 +137,14 @@ def main(kwargs: DictConfig):
             pin_memory=True
         )
 
-    # --- 模型构建 ---
     logger.info(f"Creating model... (Rank {rank})")
     model_wrapper, tokenizer = create_training_model(model_config, dataset_config)
     
-    # ================= [新增] 加载预训练权重 =================
+    # 加载ckpt
     if ckpt_path and os.path.exists(ckpt_path):
         if rank == 0:
             logger.info(f"--> Loading pretrained checkpoint from: {ckpt_path}")
         
-        # 加载权重到 CPU
         state_dict = torch.load(ckpt_path, map_location="cpu")
         
         # 处理可能的键名不匹配 (如果旧ckpt里有 module. 前缀)
@@ -254,7 +174,7 @@ def main(kwargs: DictConfig):
         total_params = sum(p.numel() for p in model_wrapper.parameters() if p.requires_grad)
         logger.info(f"--> Model Parameters: {total_params / 1e6:.2f} Million")
 
-    # --- DeepSpeed 初始化 ---
+
     logger.info(f"Initializing DeepSpeed... (Rank {rank})")
     parameters = filter(lambda p: p.requires_grad, model_wrapper.parameters())
     
@@ -264,12 +184,11 @@ def main(kwargs: DictConfig):
         config=ds_config_path
     )
 
-    # --- 训练循环 ---
+
     global_step = 0
     best_loss = float('inf')
     num_epochs = train_config.num_epochs
 
-    calc = Calculator()
     for epoch in range(num_epochs):
         train_sampler.set_epoch(epoch)
         model_engine.train()
@@ -279,101 +198,19 @@ def main(kwargs: DictConfig):
             logger.info(f"=== Starting Epoch {epoch+1}/{num_epochs} ===")
             pbar = tqdm(total=len(train_dataloader), desc=f"Epoch {epoch+1}", dynamic_ncols=True)
 
-        # 训练循环内部逻辑片段
-        # 训练循环内部逻辑片段 (适配优化后的并行 MBR)
+
         for step, batch in enumerate(train_dataloader):
             batch = to_device(batch, model_engine.device)
             
-            # --- 步骤 1: 基础 SFT (Teacher Forcing) ---
+            # 纯CE loss SFT
             outputs, acc = model_engine(
                 text_onehot=batch["text_onehot"],
                 text_mask=batch["text_mask"],
                 target_psd=batch["target_psd"],
                 target_lengths=batch["target_lengths"],
-                error_stats=batch["error_stats"]
+                bucket_id=batch["bucket_id"]
             )
-            loss_ce = outputs.loss
-
-            use_mbr = getattr(model_config, "use_mbr", True)
-            mbr_lambda = getattr(model_config, "mbr_lambda", 2.0)
-            mbr_tau = getattr(model_config, "mbr_tau", 0.8)
-            mbr_k = getattr(model_config, "mbr_k", 3)
-
-            if use_mbr:
-                raw_model = model_engine.module.simulator if hasattr(model_engine.module, "simulator") else model_engine.module
-                
-                # --- 步骤 2: 无梯度采样 (适配新接口) ---
-                with torch.no_grad():
-                    # 关键修改：解构返回的 ids 和软特征
-                    sampled_ids_list, soft_features_list = raw_model.mbr_sampling(
-                        batch["text_onehot"], batch["text_mask"], batch["error_stats"],
-                        max_len=model_config.max_len, temperature=mbr_tau, k=mbr_k
-                    )
-                    # 计算常数风险矩阵 [B, K]
-                    r_matrix = compute_batch_penalty(
-                        sampled_ids_list, batch["text_ids"], batch["error_stats"], calc
-                    ).to(model_engine.device)
-
-                # --- 步骤 3: 并行化有梯度对数概率回算 ---
-                # 关键修改：同时传入 ids 和采样时记录的 soft_features 以消灭 for 循环
-                log_probs_matrix = raw_model.mbr_log_probs(
-                    batch["text_onehot"], 
-                    batch["text_mask"], 
-                    batch["error_stats"], 
-                    sampled_ids_list,
-                    soft_features_list
-                ) # [B, K]
-
-                # --- 步骤 4: 计算期望风险损失 ---
-                with torch.no_grad():
-                    lp_max = log_probs_matrix.max(dim=1, keepdim=True)[0]
-                    lp_min = log_probs_matrix.min(dim=1, keepdim=True)[0]
-                    lp_range = lp_max - lp_min + 1e-6
-                        
-                    # 强行映射到 [0, 1] 比例，然后再放大到合适倍数
-                normalized_lp = (log_probs_matrix - lp_max) / lp_range * 1.5 # 可调，越大越尖锐
-                q_matrix = torch.softmax(normalized_lp, dim=-1)
-                per_sample_mbr_loss = (q_matrix * r_matrix).sum(dim=1)
-                loss_mbr = per_sample_mbr_loss.mean()
-
-                # === MBR 逻辑正确性检查代码 ===
-                debug_interval = log_config.get("debug_interval", 100)
-                if rank == 0 and global_step % debug_interval == 0:
-                    with torch.no_grad():
-                        sample_idx = 0 
-                        sample_k_paths = []
-                        for k_idx in range(mbr_k):
-                            path_ids = sampled_ids_list[k_idx][sample_idx]
-                            path_tuple = tuple(path_ids[path_ids != 0].cpu().tolist())
-                            sample_k_paths.append(path_tuple)
-                            
-                        unique_paths = len(set(sample_k_paths))
-                        r_sample = r_matrix[sample_idx]
-                        q_sample = q_matrix[sample_idx]
-                        
-                        print(f"\n{'='*20} MBR Debug (Step: {global_step}) {'='*20}")
-                        print(f"Sample 0 Diversity: {unique_paths}/{mbr_k} unique paths")
-                        
-                        for k_idx in range(mbr_k):
-                            path_preview = list(sample_k_paths[k_idx][:10])
-                            print(f"  Path {k_idx}: Penalty={r_sample[k_idx]:.4f}, Prob(q)={q_sample[k_idx]:.4f} | IDs: {path_preview}...")
-                        
-                        best_k = torch.argmin(r_sample).item()
-                        worst_k = torch.argmax(r_sample).item()
-                        print(f"  --> Comparison: Best(Pnl:{r_sample[best_k]:.3f}/Prob:{q_sample[best_k]:.3f}) vs Worst(Pnl:{r_sample[worst_k]:.3f}/Prob:{q_sample[worst_k]:.3f})")
-                        
-                        entropy = -(q_sample * torch.log(q_sample + 1e-9)).sum()
-                        print(f"  --> Softmax Entropy: {entropy:.4f}")
-                        print(f"{'='*55}\n")
-                # ============================================
-                
-                # loss = loss_mbr # 暂时微调使用纯penalty
-                loss = loss_mbr
-                # loss = loss_ce + mbr_lambda * loss_mbr
-                penalty_log = r_matrix.mean()
-            else:
-                loss = loss_ce
-                penalty_log = torch.tensor(0.0)
+            loss = outputs.loss
 
             model_engine.backward(loss)
             model_engine.step()
@@ -383,8 +220,7 @@ def main(kwargs: DictConfig):
             if rank == 0:
                 cur_lr = model_engine.get_lr()[0]
                 pbar.set_postfix(
-                    ce_loss=f"{loss_ce.item():.4f}", 
-                    pnl=f"{penalty_log.item():.4f}" if use_mbr else "OFF",
+                    loss=f"{loss.item():.4f}", 
                     acc=f"{acc.item():.4f}", 
                     lr=f"{cur_lr:.2e}")
                 pbar.update(1)
@@ -392,8 +228,7 @@ def main(kwargs: DictConfig):
                 if global_step % log_config.log_interval == 0:
                     step_logger.info(
                         f"Epoch: {epoch+1}, Step: {step}, Global: {global_step}, "
-                        f"Loss: {loss.item():.4f}, Penalty: {penalty_log.item():.4f}, CE_Loss: {loss_ce.item():.4f}," 
-                        f"Acc: {acc.item():.4f}, LR: {cur_lr:.2e}"
+                        f"Loss: {loss.item():.4f}, Acc: {acc.item():.4f}, LR: {cur_lr:.2e}" 
                     )
 
             if train_config.run_validation and global_step % train_config.validation_interval == 0:
@@ -438,27 +273,15 @@ def main(kwargs: DictConfig):
         logger.info("Training Finished.")
 
 def evaluate(model_engine, dataloader, rank, model_config, calculator):
-    """
-    修改后的验证函数：
-    1. 遵循非贪婪采样逻辑，使用与训练一致的采样温度和软反馈链条。
-    2. 局部累加指标，循环外执行单次分布式汇总，彻底解决 HCCL 报错。
-    """
     if dataloader is None:
         return float('inf')
         
     model_engine.eval()
     
     # 局部累加器（初始化为 Python 标量）
-    local_sum_combined = 0.0
     local_sum_ce = 0.0
-    local_sum_penalty = 0.0
     local_sum_acc = 0.0
     local_steps = 0
-    
-    mbr_lambda = getattr(model_config, "mbr_lambda", 2.0)
-    # 验证阶段使用与训练一致的非贪婪采样温度
-    sampling_temp = getattr(model_config, "mbr_tau", 0.8)
-    max_len = getattr(model_config, "max_len", 160)
     
     pbar = None
     if rank == 0:
@@ -478,33 +301,9 @@ def evaluate(model_engine, dataloader, rank, model_config, calculator):
                 error_stats=batch["error_stats"]
             )
             loss_ce = outputs.loss
-            
-            # 2. 计算基于非贪婪软反馈的 Penalty
-            raw_model = model_engine.module.simulator if hasattr(model_engine.module, "simulator") else model_engine.module
-            
-            # 关键修改：使用非贪婪温度采样，模拟真实 soft-AR 推理
-            sampled_ids, _ = raw_model.mbr_sampling(
-                batch["text_onehot"], 
-                batch["text_mask"], 
-                batch["error_stats"],
-                max_len=max_len, 
-                temperature=sampling_temp, 
-                k=1 # 验证时每条数据取一路采样即可，但必须是非贪婪过程
-            )
-            
-            # 计算当前批次平均偏差
-            penalty_matrix = compute_batch_penalty(
-                sampled_ids, 
-                batch["text_ids"], 
-                batch["error_stats"], 
-                calculator
-            )
-            avg_penalty = penalty_matrix.mean().to(loss_ce.device)
 
             # 3. 本地累加指标
-            local_sum_combined += (loss_ce + mbr_lambda * avg_penalty).item()
             local_sum_ce += loss_ce.item()
-            local_sum_penalty += avg_penalty.item()
             local_sum_acc += acc.item() if isinstance(acc, torch.Tensor) else acc
             local_steps += 1
             
@@ -518,29 +317,25 @@ def evaluate(model_engine, dataloader, rank, model_config, calculator):
     if dist.is_initialized():
         # 封装到张量，统一转移到 NPU，强制 float32 避免类型报错
         metrics = torch.tensor([
-            local_sum_combined, local_sum_ce, local_sum_penalty, local_sum_acc, float(local_steps)
+            local_sum_ce, local_sum_acc, float(local_steps)
         ], device=model_engine.device, dtype=torch.float32)
         
-        # 确保所有 Rank 到达后再同步
         dist.barrier() 
         dist.all_reduce(metrics, op=dist.ReduceOp.SUM)
         
         # 解包全局汇总值
-        sum_comb, sum_ce, sum_p, sum_acc, global_steps = metrics.tolist()
+        sum_ce, sum_acc, global_steps = metrics.tolist()
     else:
-        sum_comb, sum_ce, sum_p, sum_acc, global_steps = \
-            local_sum_combined, local_sum_ce, local_sum_penalty, local_sum_acc, float(local_steps)
+        sum_ce, sum_acc, global_steps = local_sum_ce, local_sum_acc, float(local_steps)
 
-    avg_loss_combined = sum_comb / (global_steps + 1e-6)
+    avg_loss = sum_ce / (global_steps + 1e-6)
+    avg_acc = sun_acc / (global_steps + 1e-6)
     
     if rank == 0:
-        logger.info(f"--- MBR Validation Result (Temp={sampling_temp}) ---")
-        logger.info(f"Combined Loss: {avg_loss_combined:.4f}")
-        logger.info(f"Base CE: {sum_ce/(global_steps+1e-6):.4f} | "
-                    f"Avg Penalty: {sum_p/(global_steps+1e-6):.4f} | "
-                    f"Acc: {sum_acc/(global_steps+1e-6):.4f}")
+        logger.info(f"--- Validation Result ---")
+        logger.info(f"CE Loss: {avg_loss:.4f} | Acc: {avg_acc:.4f}")
         
-    return avg_loss_combined
+    return avg_loss
 
 def to_device(batch, device):
     new_batch = {}

@@ -11,12 +11,9 @@ from .config import SimulatorConfig
 class SimulatorOutput:
     loss: torch.Tensor
     logits: torch.Tensor
-    per_sample_loss: torch.Tensor = None  # 新增：用于存储 [B] 维度的样本损失
+    per_sample_loss: torch.Tensor = None  # 用于存储 [B] 维度的样本损失
 
-# ==========================================
-# 1. 基础组件 (原封不动，绝对不改)
-# ==========================================
-
+# 组件
 class LayerNorm(nn.LayerNorm):
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -99,9 +96,6 @@ class PositionalEncoding(nn.Module):
             return x + self.pe[:, :self.pe.size(1), :]
         return self.dropout(x + self.pe[:, :T, :])
 
-# ==========================================
-# 2. Encoder / Decoder Layers (原封不动)
-# ==========================================
 
 class ManualEncoderLayer(nn.Module):
     def __init__(self, size, n_head, dim_feedforward, dropout_rate):
@@ -148,10 +142,7 @@ class ManualDecoderLayer(nn.Module):
         x = residual + self.dropout(self.feed_forward(x))
         return x
 
-# ==========================================
-# 3. 主模型架构
-# ==========================================
-
+#主模型
 class CTCTransformerSimulator(nn.Module):
     def __init__(self, config: SimulatorConfig):
         super().__init__()
@@ -162,11 +153,7 @@ class CTCTransformerSimulator(nn.Module):
         self.text_input_proj = nn.Linear(config.ctc_vocab_size, config.d_model)
         self.text_pos_encoder = PositionalEncoding(config.d_model, config.dropout, config.max_len)
         
-        self.condition_projector = nn.Sequential(
-            nn.Linear(4, config.d_model),
-            nn.ReLU(),
-            nn.Linear(config.d_model, config.d_model)
-        )
+        self.condition_projector = nn.Embedding(5, config.d_model) # 0用于padding，1-4是id，共5个
         
         self.encoder_layers = nn.ModuleList([
             ManualEncoderLayer(config.d_model, config.n_head, config.dim_feedforward, config.dropout)
@@ -189,9 +176,9 @@ class CTCTransformerSimulator(nn.Module):
 
         self.output_head = nn.Linear(config.d_model, self.vocab_size_out)
 
-    def encode_text(self, text_onehot, text_mask, error_stats):
+    def encode_text(self, text_onehot, text_mask, bucket_id):
         x = self.text_input_proj(text_onehot)
-        cond_emb = self.condition_projector(error_stats).unsqueeze(1)
+        cond_emb = self.condition_projector(bucket_id).unsqueeze(1)
         x = torch.cat([cond_emb, x], dim=1)
         
         B = x.size(0)
@@ -216,8 +203,8 @@ class CTCTransformerSimulator(nn.Module):
         logits = self.output_head(x)
         return logits
 
-    def forward(self, text_onehot, text_mask, target_psd, target_lengths, error_stats):
-        memory, memory_mask = self.encode_text(text_onehot, text_mask, error_stats)
+    def forward(self, text_onehot, text_mask, target_psd, target_lengths, bucket_id):
+        memory, memory_mask = self.encode_text(text_onehot, text_mask, bucket_id)
 
         prev_frames_emb = self.audio_input_proj(target_psd[:, :-1, :]) 
         sos = self.sos_emb.expand(prev_frames_emb.size(0), -1, -1)
@@ -230,9 +217,9 @@ class CTCTransformerSimulator(nn.Module):
         return logits
 
     @torch.no_grad()
-    def inference(self, text_onehot, text_mask, error_stats, max_len=160, temperature=0.5): 
+    def inference(self, text_onehot, text_mask, bucket_id, max_len=160, temperature=0.5): 
         B = text_onehot.size(0)
-        memory, memory_mask = self.encode_text(text_onehot, text_mask, error_stats)
+        memory, memory_mask = self.encode_text(text_onehot, text_mask, bucket_id)
         
         current_input = self.sos_emb.expand(B, -1, -1)
         generated_logits = []
@@ -254,134 +241,7 @@ class CTCTransformerSimulator(nn.Module):
         
         return probs
 
-    # ==========================================
-    # [新增] MBR 采样与概率回算接口
-    # ==========================================
-
-    @torch.no_grad()
-    def mbr_sampling(self, text_onehot, text_mask, error_stats, max_len=160, temperature=0.5, k=4):
-        """
-        终极优化：将 B 扩展为 B*K，在一个 AR 循环内完成所有采样。
-        """
-        B = text_onehot.size(0)
-        BK = B * k
-        
-        # 1. 扩展输入维度
-        # [B, L, D] -> [B*K, L, D]
-        memory, memory_mask = self.encode_text(text_onehot, text_mask, error_stats)
-        memory = memory.repeat_interleave(k, dim=0)
-        memory_mask = memory_mask.repeat_interleave(k, dim=0)
-        
-        # 2. 准备并行状态
-        history_emb = self.sos_emb.expand(BK, -1, -1)
-        all_step_ids = []
-        all_step_soft_embs = [history_emb]
-        
-        eos_id = 25055
-        finished = torch.zeros(BK, dtype=torch.bool, device=text_onehot.device)
-
-        # 核心：只跑一个 T 循环
-        for t in range(max_len):
-            dec_input = self.decoder_pos_encoder(history_emb)
-            logits_seq = self.decode_audio_step(dec_input, memory, memory_mask)
-            last_logits = logits_seq[:, -1, :] # [BK, V]
-            
-            probs = torch.softmax(last_logits / temperature, dim=-1)
-            pred_token = torch.multinomial(probs, num_samples=1).squeeze(-1) # [BK]
-            all_step_ids.append(pred_token)
-
-            finished |= (pred_token == eos_id)
-            if finished.all():
-                break
-
-            # 记录软特征流
-            next_in_emb = self.audio_input_proj(probs).unsqueeze(1)
-            all_step_soft_embs.append(next_in_emb)
-            history_emb = torch.cat([history_emb, next_in_emb], dim=1)
-            
-        # 3. 整理输出，恢复 [B, K, T] 结构
-        # [BK, T] -> [B, k, T]
-        sampled_ids = torch.stack(all_step_ids, dim=1).view(B, k, -1)
-        # [BK, T, D] -> [B, k, T, D]
-        soft_features = torch.cat(all_step_soft_embs, dim=1)
-        # 截断特征长度与 ID 长度对齐
-        soft_features = soft_features[:, :sampled_ids.size(2), :].view(B, k, -1, self.d_model)
-
-        # 为配合原有 compute_batch_penalty 逻辑，ids 返回 list
-        sampled_ids_list = [sampled_ids[:, i, :] for i in range(k)]
-        soft_features_list = [soft_features[:, i, :, :] for i in range(k)]
-
-        return sampled_ids_list, soft_features_list
-
-    def mbr_log_probs(self, text_onehot, text_mask, error_stats, sampled_ids_list, soft_features_list):
-        """
-        优化：并行化回算。利用采样时记录的 soft_features 进行一次性前向。
-        """
-        B = text_onehot.size(0)
-        K = len(sampled_ids_list)
-        eos_id = 25055
-        memory, memory_mask = self.encode_text(text_onehot, text_mask, error_stats)
-        
-        # 1. 准备并行数据
-        # 统一填充到当前 batch 的最大采样长度
-        max_t = max(ids.size(1) for ids in sampled_ids_list)
-        
-        # 将 B 和 K 维度合并: [B*K, T, ...]
-        combined_ids = []
-        combined_soft_features = []
-        combined_masks = []
-        
-        for k in range(K):
-            ids = sampled_ids_list[k]
-            soft_feat = soft_features_list[k]
-            curr_t = ids.size(1)
-            
-            # Padding
-            pad_len = max_t - curr_t
-            if pad_len > 0:
-                ids = F.pad(ids, (0, pad_len), value=0)
-                soft_feat = F.pad(soft_feat, (0, 0, 0, pad_len), value=0.0)
-            
-            # EOS Mask
-            is_eos = (ids == eos_id).cumsum(dim=1)
-            seq_mask = (is_eos <= 1).float()
-            
-            combined_ids.append(ids)
-            combined_soft_features.append(soft_feat)
-            combined_masks.append(seq_mask)
-
-        # --- 核心修正：使用 stack + view 确保排列顺序对齐 [S0_P0, S0_P1, S1_P0, S1_P1...] ---
-        # [B*K, T, D]
-        batch_soft_feat = torch.stack(combined_soft_features, dim=1).view(B * K, max_t, -1)
-        # [B*K, T]
-        batch_ids = torch.stack(combined_ids, dim=1).view(B * K, -1)
-        # [B*K, T]
-        batch_masks = torch.stack(combined_masks, dim=1).view(B * K, -1)
-        
-        # 2. 扩展 Memory 以匹配 B*K
-        # memory: [B, L, D] -> [B*K, L, D] (顺序: S0, S0, S1, S1...)
-        expanded_memory = memory.repeat_interleave(K, dim=0)
-        expanded_mem_mask = memory_mask.repeat_interleave(K, dim=0)
-
-        # 3. 一次性并行 Decoder 计算 (核心优化：$O(1)$ 时间复杂度)
-        decoder_input = self.decoder_pos_encoder(batch_soft_feat)
-        # 注意：decode_audio_step 内部已有因果掩码逻辑
-        all_logits = self.decode_audio_step(decoder_input, expanded_memory, expanded_mem_mask)
-        
-        # 4. 提取对数概率
-        log_softmax = F.log_softmax(all_logits, dim=-1)
-        # 提取采样 ID 对应的 log_prob: [B*K, T]
-        target_log_probs = torch.gather(log_softmax, dim=-1, index=batch_ids.unsqueeze(-1)).squeeze(-1)
-        
-        # 掩码求和并恢复维度 [B, K]
-        # 这里的 .view(B, K) 会正确地将 [S0_P0, S0_P1, S1_P0, S1_P1] 还原回 [B, K]
-        final_log_probs = (target_log_probs * batch_masks).sum(dim=1)
-        return final_log_probs.view(B, K)
-
-# ==========================================
-# 4. 训练封装类 (原封不动)
-# ==========================================
-
+#封装
 class SimulatorTrainingWrapper(nn.Module):
     def __init__(self, simulator: CTCTransformerSimulator):
         super().__init__()
@@ -415,26 +275,17 @@ class SimulatorTrainingWrapper(nn.Module):
             if (current_loss < 2.0 and eos_correct < 0.5):
                 print(f"\n[Monitor] Low EOS Accuracy: {eos_correct:.2%} (Loss: {current_loss:.2f})")
 
-    def forward(self, text_onehot, text_mask, target_psd, target_lengths, error_stats, **kwargs):
-        """
-        MBR 调度前向:
-        1. SFT 阶段 (Teacher Forcing)
-        2. MBR 阶段 (由训练脚本外部调度或在此处完成，建议在此处统一返回输出对象)
-        """
-        # --- 阶段 1: SFT ---
-        logits = self.simulator(text_onehot, text_mask, target_psd, target_lengths, error_stats)
+    def forward(self, text_onehot, text_mask, target_psd, target_lengths, bucket_id, **kwargs):
+        # 纯CE loss，无需任何MBR
+        logits = self.simulator(text_onehot, text_mask, target_psd, target_lengths, bucket_id)
         B, T, _ = logits.size()
         seq_range = torch.arange(T, device=logits.device).unsqueeze(0)
         loss_mask = (seq_range < target_lengths.unsqueeze(1)).float()
 
-        # 基础 CE Loss
         per_sample_ce = self.soft_cross_entropy(logits, target_psd, loss_mask)
         loss_sft = per_sample_ce.mean()
         
+        #注：acc是BPE序列中ID正确数/总数
         acc = self.compute_accuracy(logits, target_psd, loss_mask)
-        
-        # 注意：此处不在此直接计算 MBR Loss，而是将 logits 传出，
-        # 由 train_simulator.py 决定何时调用 MBR 采样，
-        # 这样可以保持 model.py 的纯粹性，方便管理采样策略。
         
         return SimulatorOutput(loss=loss_sft, logits=logits, per_sample_loss=per_sample_ce), acc
