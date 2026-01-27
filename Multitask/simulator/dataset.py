@@ -40,14 +40,18 @@ class SimulatorDataset(Dataset):
     def __len__(self) -> int:
         return len(self.data)
 
-    def _restore_psd_matrix(self, indices: np.ndarray, values: np.ndarray):
-        T = indices.shape[0]
+    def _restore_psd_matrix(self, indices: np.ndarray, values: np.ndarray, original_shape: list):
+        T = original_shape[0]
+        t_indices = torch.from_numpy(indices.astype(np.int64)).reshape(T, -1)
+        t_values = torch.from_numpy(values.astype(np.float32)).reshape(T, -1)
+        
         dense_base = torch.zeros((T, VOCAB_SIZE_BASE), dtype=torch.float32)
-        t_indices = torch.from_numpy(indices.astype(np.int64))
-        t_values = torch.from_numpy(values.astype(np.float32))
+
         dense_base.scatter_(1, t_indices, t_values)
+        
         padding_col = torch.zeros((T, 1), dtype=torch.float32)
         dense_extended = torch.cat([dense_base, padding_col], dim=1)
+        
         eos_frame = torch.zeros((1, VOCAB_SIZE_FULL), dtype=torch.float32)
         eos_frame[0, EOS_INDEX] = 1.0
         final_matrix = torch.cat([dense_extended, eos_frame], dim=0)
@@ -77,11 +81,11 @@ class SimulatorDataset(Dataset):
             # 转为 LongTensor
             text_ids_tensor = torch.from_numpy(raw_text_ids.astype(np.int64))
 
-            psd_tensor = self._restore_psd_matrix(data['psd_indices'], data['psd_values'])
+            psd_tensor = self._restore_psd_matrix(data['psd_indices'], data['psd_values'], data['shape'])
             if psd_tensor.size(0) > self.max_len:
                 psd_tensor = psd_tensor[:self.max_len, :]           
             
-            bucket_id = item.get("bucket_id", 1)
+            bucket_id = torch.tensor(item.get("bucket_id", 1), dtype=torch.long)
                         
             return {
                 "text_onehot": text_tensor,      
@@ -97,7 +101,7 @@ class SimulatorDataset(Dataset):
                 "text_onehot": torch.zeros((1, VOCAB_SIZE_BASE), dtype=torch.float32),
                 "text_ids": torch.zeros(1, dtype=torch.long), # [新增] Error case 占位
                 "target_psd": torch.zeros((1, VOCAB_SIZE_FULL), dtype=torch.float32),
-                "error_stats": torch.zeros(4, dtype=torch.float32), 
+                "bucket_id": torch.tensor(1, dtype=torch.long),
                 "key": "error"
             }
 
