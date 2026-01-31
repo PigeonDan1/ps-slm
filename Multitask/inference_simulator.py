@@ -87,10 +87,8 @@ def main():
     parser.add_argument("--device_id", type=int, required=True)
     parser.add_argument("--input_jsonl", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    parser.add_argument("--s_rate", type=float, default=0.0)
-    parser.add_argument("--d_rate", type=float, default=0.0)
-    parser.add_argument("--i_rate", type=float, default=0.0)
-    parser.add_argument("--wer", type=float, default=0.0)
+    # [修改] 替换 SDI/WER 参数为离散的 bucket_id (1, 2, 3, 4)
+    parser.add_argument("--bucket_id", type=int, default=1, choices=[1, 2, 3, 4], help="Bucket ID for error control")
     args = parser.parse_args()
 
     device = torch.device(f"npu:{args.device_id}")
@@ -104,7 +102,7 @@ def main():
     model.load_state_dict({k.replace("simulator.", "").replace("module.", ""): v for k, v in sd.items()})
     model.to(device).eval()
 
-    cond = torch.tensor([args.s_rate, args.d_rate, args.i_rate, args.wer], device=device).unsqueeze(0)
+    # [删除] 移除旧的连续值 cond 构造逻辑
 
     with open(args.input_jsonl, 'r', encoding='utf-8') as f:
         lines = f.readlines()[args.rank::args.world_size]
@@ -117,13 +115,22 @@ def main():
         for batch in tqdm(loader, desc=f"NPU {args.device_id}"):
             if batch is None: continue
             with torch.no_grad():
-                probs_b = model.inference(batch['text_onehot'].to(device), batch['text_mask'].to(device), 
-                                         error_stats=cond.expand(len(batch['keys']), -1), 
-                                         max_len=160, temperature=0.5)
+                # [修改] 构造 batch 维度的 bucket_id Tensor (LongTensor)
+                b_size = len(batch['keys'])
+                bucket_id_batch = torch.full((b_size,), args.bucket_id, device=device, dtype=torch.long)
+                
+                # [修改] 调用 inference 时使用 bucket_id 参数
+                probs_b = model.inference(
+                    batch['text_onehot'].to(device), 
+                    batch['text_mask'].to(device), 
+                    bucket_id=bucket_id_batch, 
+                    max_len=160, 
+                    temperature=0.5
+                )
             
             for i, key in enumerate(batch['keys']):
                 probs = probs_b[i]
-                # [EOS 处理] 找到第一个 EOS 位置并截断（不保留 EOS 帧）
+                # [EOS 处理] 保持原逻辑不变
                 pred_ids = probs.argmax(dim=-1)
                 eos_indices = (pred_ids == 25055).nonzero(as_tuple=True)[0]
                 if len(eos_indices) > 0:
@@ -131,7 +138,6 @@ def main():
                     probs = probs[:valid_len, :]
                 
                 save_path = os.path.join(args.output_dir, f"{key}.pt")
-                # [修正调用] 传入 text_ids
                 save_sparse_tensor(probs, save_path, batch['text_ids'][i])
                 
                 item = batch['items'][i].copy()

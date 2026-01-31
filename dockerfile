@@ -33,6 +33,7 @@ RUN pip3 install -i https://pypi.tuna.tsinghua.edu.cn/simple --no-cache-dir \
     peft==0.6.0 \
     funasr \
     modelscope \
-    openai-whisper
+    openai-whisper \
+    ms-swift
 
 CMD ["/bin/bash"]

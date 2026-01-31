@@ -234,7 +234,7 @@ def main(kwargs: DictConfig):
             if train_config.run_validation and global_step % train_config.validation_interval == 0:
                 if rank == 0 and pbar: pbar.close()
                 
-                val_loss = evaluate(model_engine, dev_dataloader, rank, model_config, calc)
+                val_loss = evaluate(model_engine, dev_dataloader, rank, model_config)
                 model_engine.train()
                 
                 if rank == 0:
@@ -272,7 +272,7 @@ def main(kwargs: DictConfig):
     if rank == 0:
         logger.info("Training Finished.")
 
-def evaluate(model_engine, dataloader, rank, model_config, calculator):
+def evaluate(model_engine, dataloader, rank, model_config):
     if dataloader is None:
         return float('inf')
         
@@ -298,7 +298,7 @@ def evaluate(model_engine, dataloader, rank, model_config, calculator):
                 text_mask=batch["text_mask"],
                 target_psd=batch["target_psd"],
                 target_lengths=batch["target_lengths"],
-                error_stats=batch["error_stats"]
+                bucket_id=batch["bucket_id"]
             )
             loss_ce = outputs.loss
 
@@ -329,7 +329,7 @@ def evaluate(model_engine, dataloader, rank, model_config, calculator):
         sum_ce, sum_acc, global_steps = local_sum_ce, local_sum_acc, float(local_steps)
 
     avg_loss = sum_ce / (global_steps + 1e-6)
-    avg_acc = sun_acc / (global_steps + 1e-6)
+    avg_acc = sum_acc / (global_steps + 1e-6)
     
     if rank == 0:
         logger.info(f"--- Validation Result ---")

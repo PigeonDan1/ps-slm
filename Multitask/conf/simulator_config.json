@@ -22,8 +22,8 @@
     "scheduler": {
         "type": "WarmupCosineLR",
         "params": {
-        "warmup_num_steps": 125,
-        "total_num_steps": 16500
+        "warmup_num_steps": 3500,
+        "total_num_steps": 69000
     }},
     "checkpoint_activations": false
 
