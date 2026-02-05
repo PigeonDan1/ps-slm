@@ -6,6 +6,6 @@ mkdir -p "$BASE_DIR/logs"
 # 提交任务
 vc submit -p "pdgpu-aispeech-ai" \
   -i "hub.szaic.com/sjtu/sjtu_yukai-chenghao.wang-ps-slm:v1.0" \
-  -c 20 -m "512G" -g 8 \
+  -c 128 -m "512G" -g 8 \
   "JOB=1:1" "$LOG_PATH" \
   --cmd "sleep infinity"

@@ -10,25 +10,23 @@ export CPU_AFFINITY_CONF=1
 
 export PATH=/usr/local/python3.10.15/bin:$PATH
 
-# ================= 路径配置 =================
 run_dir=$(cd $(dirname $0)/..; pwd)
 cd $run_dir || exit 1
 code_dir=.
 
 DATA_ROOT="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data"
-train_data_path="${DATA_ROOT}/train/multitask_augmented.jsonl"
-dev_data_path="${DATA_ROOT}/dev/multitask_augmented.jsonl"
+train_data_path="${DATA_ROOT}/train/train_augmented_3bucket.jsonl"
+dev_data_path="${DATA_ROOT}/train/val_augmented_3bucket.jsonl" # 千万注意我现在使用的是train中分出来的验证集确保区间均匀，文本一对一
 tokenizer_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
 
-# 训练权重路径
 ckpt_path=""
 model_name="ctc_simulator_ar_control_augmentedData" 
-num_epochs=50
-batch_size_per_gpu=64 
-val_batch_size=64
+num_epochs=80
+batch_size_per_gpu=32 
+val_batch_size=32
 grad_accum=1
-lr=1e-4
-val_interval=1380
+lr=2e-4
+val_interval=486
 
 exp_tag="ar_control_augmentation" 
 output_dir="${code_dir}/exp/simulator_${exp_tag}_$(date +"%Y%m%d-%H%M")"
@@ -48,11 +46,10 @@ hydra.run.dir=$output_dir \
 ++train_config.val_batch_size=$val_batch_size \
 ++train_config.gradient_accumulation_steps=$grad_accum \
 ++train_config.lr=$lr \
-++train_config.total_steps=69000 \
-++train_config.warmup_steps=3500 \
+++train_config.total_steps=38880 \
+++train_config.warmup_steps=1944 \
 ++train_config.output_dir=$output_dir \
 ++train_config.enable_deepspeed=true \
-++train_config.use_fp16=true \
 ++train_config.num_workers_dataloader=4 \
 ++train_config.validation_interval=$val_interval \
 ++train_config.run_validation=true \
@@ -61,13 +58,10 @@ hydra.run.dir=$output_dir \
 "
 
 
-# 如果环境变量设置了 ASCEND_VISIBLE_DEVICES，则优先使用（但这里为了避开2号卡，建议不要设置环境变量或者确认环境变量里没有2）
-# 为了保险，这里我们可以强制覆盖，或者只在未设置时使用
 if [ -z "$ASCEND_VISIBLE_DEVICES" ]; then
     echo "--> No ASCEND_VISIBLE_DEVICES set, using hardcoded list: $TARGET_GPU_IDS"
 else
     echo "--> Warning: ASCEND_VISIBLE_DEVICES is set to $ASCEND_VISIBLE_DEVICES."
-    echo "--> Overriding with target list: $TARGET_GPU_IDS to avoid GPU 2."
 fi
 
 if [ -z "$VC_MASTER_HOSTS" ] && [ -z "$RANK" ]; then

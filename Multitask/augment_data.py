@@ -15,19 +15,14 @@ from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
 from preprocess_data import load_audio_flexible, psd_processing, setup_distributed
 import pt 
 
-# ================= 配置 =================
 BASE_DIR = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask"
 MODEL_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
-INPUT_JSONL = os.path.join(BASE_DIR, "data/train/multitask.jsonl") 
+INPUT_JSONL = os.path.join(BASE_DIR, "data/train/multitask_filtered.jsonl") 
 OUTPUT_PT_DIR = os.path.join(BASE_DIR, "data/train/augmented_psd_files")
-INFERENCE_BATCH_SIZE = 24 # 大规模处理时，适当增加 Batch Size 提升吞吐
+INFERENCE_BATCH_SIZE = 48 # NPU 显存较大，可增加 Batch Size 提升并行效率
 
-class NativeAugmentor:
-    @staticmethod
-    def shift(samples):
-        fraction = np.random.uniform(-0.03, 0.03)
-        return np.roll(samples, int(len(samples) * fraction))
-
+class NoiseAugmentor:
+    """阶梯式增强：通过低通滤波和强底噪精准控制 WER 区间"""
     @staticmethod
     def add_gaussian_snr(samples, min_db, max_db):
         snr = np.random.uniform(min_db, max_db)
@@ -36,41 +31,67 @@ class NativeAugmentor:
         return samples + np.random.normal(0, noise_rms, samples.shape).astype(np.float32)
 
     @staticmethod
-    def freq_mask(samples, sr=16000):
-        bandwidth = np.random.randint(0.02 * sr // 2, 0.06 * sr // 2)
+    def apply_lowpass(samples, cutoff, sr=16000):
+        # 稳定的高频切除，3000Hz以下会显著提升替换错误
+        sos = butter(6, cutoff, btype="lowpass", output="sos", fs=sr)
+        return sosfilt(sos, samples).astype(np.float32)
+
+    @staticmethod
+    def freq_mask(samples, sr=16000, width_ratio=0.15):
+        # 拓宽掩码范围，直接切断关键共振峰
+        bandwidth = np.random.randint(int(0.08 * sr // 2), int(width_ratio * sr // 2))
         start = np.random.randint(16, sr // 2 - bandwidth - 1)
         sos = butter(6, [start, start + bandwidth], btype="bandstop", output="sos", fs=sr)
         return sosfilt(sos, samples).astype(np.float32)
 
     @staticmethod
-    def time_mask(samples):
-        t_len = np.random.randint(int(len(samples) * 0.03), int(len(samples) * 0.07))
-        t_start = np.random.randint(0, len(samples) - t_len)
+    def time_mask(samples, max_ratio=0.06):
+        # 采用短而多次的遮蔽，模拟信号闪变而不破坏整体节奏
         new_s = samples.copy()
-        new_s[t_start : t_start + t_len] = 0
+        for _ in range(random.randint(1, 2)):
+            t_len = np.random.randint(int(len(samples) * 0.03), int(len(samples) * max_ratio))
+            t_start = np.random.randint(0, len(samples) - t_len)
+            new_s[t_start : t_start + t_len] = 0
         return new_s
-
-    @staticmethod
-    def distortion(samples):
-        gain = np.random.uniform(1.2, 2.0)
-        distorted = np.tanh(gain * samples)
-        return (np.sqrt(np.mean(samples**2)+1e-9) / np.sqrt(np.mean(distorted**2)+1e-9)) * distorted
-
-def apply_aug(samples, tid):
-    aug = NativeAugmentor()
-    if tid == "L": return aug.add_gaussian_snr(aug.shift(samples), 22, 32)
-    if tid == "M": return aug.add_gaussian_snr(aug.time_mask(aug.freq_mask(samples)), 16, 26)
-    if tid == "H": return aug.add_gaussian_snr(aug.distortion(samples), 8, 18)
+        
+def apply_noise_aug(samples, tid):
+    aug = NoiseAugmentor()
+    
+    # L: 目标 15-30%。
+    # 必须引入 3800Hz 低通 + 强噪声(0-5dB)，否则在大数据集上依然会堆积在 10% 以下。
+    if tid == "L": 
+        samples = aug.apply_lowpass(samples, cutoff=3800)
+        samples = aug.freq_mask(samples, width_ratio=0.12)
+        return aug.add_gaussian_snr(samples, 0, 5)
+    
+    # M: 目标 35-55%。
+    # 低通压到 2500Hz（接近窄带上限），配合 0-3dB 噪声，这是填补 B2 区间的核心。
+    if tid == "M": 
+        samples = aug.apply_lowpass(samples, cutoff=2500)
+        samples = aug.time_mask(samples, max_ratio=0.05)
+        return aug.add_gaussian_snr(samples, 0, 3)
+    
+    # H: 目标 60-120% (上限 150%)。
+    # 截止频率下压至 1800Hz，这是为了在不产生“幻听”的前提下，最大化替换错误。
+    if tid == "H": 
+        samples = aug.apply_lowpass(samples, cutoff=1800)
+        # 增加掩码次数但保持短时长，模拟极差的网络抖动
+        for _ in range(2): 
+            samples = aug.time_mask(samples, max_ratio=0.04)
+        return aug.add_gaussian_snr(samples, 2, 6)
+    
     return samples
 
 def process_batch(task_buffer, model, device, frontend, tokenizer, calc, out_f, output_dir):
     if not task_buffer: return
     waves = []
+    valid_tasks = []
     for item, tid in task_buffer:
         try:
             w, sr = load_audio_flexible(item['path'])
             if sr != 16000: w = torchaudio.transforms.Resample(sr, 16000)(w)
-            waves.append(torch.from_numpy(apply_aug(w.numpy().squeeze(), tid)))
+            waves.append(torch.from_numpy(apply_noise_aug(w.numpy().squeeze(), tid)))
+            valid_tasks.append((item, tid))
         except: continue
     if not waves: return
 
@@ -85,7 +106,7 @@ def process_batch(task_buffer, model, device, frontend, tokenizer, calc, out_f, 
         encoder_out, _ = model.encoder(torch.cat([l_q, e_q, t_q, input_f.to(device)], dim=1), input_l.to(device) + 4)
         all_probs = torch.softmax(model.ctc.ctc_lo(encoder_out[:, 4:, :]), dim=-1)
 
-    for idx, (item, tid) in enumerate(task_buffer):
+    for idx, (item, tid) in enumerate(valid_tasks):
         if idx >= len(all_probs): break
         psd_out, psd_len = psd_processing(all_probs[idx], model.blank_id, 0.90)
         if psd_out is None: continue
@@ -95,10 +116,10 @@ def process_batch(task_buffer, model, device, frontend, tokenizer, calc, out_f, 
         res = calc.calculate(ref_ids, hyp_ids)
         new_wer = (res['sub'] + res['del'] + res['ins']) / res['all'] if res['all'] > 0 else 0.0
         
+        if new_wer > 2.0:
+            continue
+        # 记录新的 Bucket ID
         new_bid = 1 if new_wer < 0.05 else 2 if new_wer < 0.1 else 3 if new_wer < 0.2 else 4
-        
-        # 核心逻辑：确保 Bucket 1 总量不变，只向 2, 3, 4 输送
-        if new_bid == 1: continue
 
         new_key = f"{item['key']}_aug_{tid}"
         save_path = os.path.join(output_dir, f"{new_key}.pt")
@@ -108,8 +129,13 @@ def process_batch(task_buffer, model, device, frontend, tokenizer, calc, out_f, 
                     "text_ids": np.array(ref_ids, dtype=np.int32), "shape": list(psd_out.shape)}, save_path)
         
         aug_item = item.copy()
-        aug_item.update({"key": new_key, "psd_path": save_path, "psd_len": int(psd_len), "bucket_id": new_bid,
-                         "bpe_error": {"RefLen": res['all'], "S": res['sub'], "D": res['del'], "I": res['ins'], "WER": new_wer}})
+        aug_item.update({
+            "key": new_key, 
+            "psd_path": save_path, 
+            "psd_len": int(psd_len), 
+            "bucket_id": new_bid,
+            "bpe_error": {"RefLen": res['all'], "S": res['sub'], "D": res['del'], "I": res['ins'], "WER": new_wer}
+        })
         out_f.write(json.dumps(aug_item, ensure_ascii=False) + "\n")
 
 def main():
@@ -122,35 +148,34 @@ def main():
     model.eval()
     frontend, tokenizer, calc = model_kwargs.get("frontend"), SenseVoiceTokenizer(MODEL_PATH), pt.Calculator()
     
-    # 策略概率：目标是补齐 Bucket 2, 3, 4 缺失的约 40w 条数据
-    # 这里几乎对 Bucket 1 做全量触发
-    prob_map = {
-        1: {"L": 0.95, "M": 0.95, "H": 0.98}, 
-        2: {"M": 0.85, "H": 0.85},
-        3: {"H": 0.85}
-    }
-    
     with open(INPUT_JSONL, 'r', encoding='utf-8') as f:
         my_lines = f.readlines()[rank::world_size]
     
     temp_jsonl = os.path.join(OUTPUT_PT_DIR, f"temp_rank{rank}.jsonl")
     buffer = []
+    
     with open(temp_jsonl, 'w', encoding='utf-8') as out_f:
         for line in tqdm(my_lines, desc=f"Rank {rank}", disable=(rank!=0)):
             item = json.loads(line.strip())
+            
+            # 1. 写入原始数据（带原始 bucket_id）
             wer = item.get("bpe_error", {}).get("WER", 0.0)
             bid = 1 if wer < 0.05 else 2 if wer < 0.1 else 3 if wer < 0.2 else 4
             item["bucket_id"] = bid
             out_f.write(json.dumps(item, ensure_ascii=False) + "\n") 
             
-            if bid in prob_map:
-                for tid, p in prob_map[bid].items():
-                    if random.random() < p: buffer.append((item, tid))
-            
-            if len(buffer) >= INFERENCE_BATCH_SIZE:
-                process_batch(buffer, model, device, frontend, tokenizer, calc, out_f, OUTPUT_PT_DIR)
-                buffer = []
-        if buffer: process_batch(buffer, model, device, frontend, tokenizer, calc, out_f, OUTPUT_PT_DIR)
+            # 2. 准备 L, M, H 三种增强任务，不设概率，100% 触发
+            for tid in ["L", "M", "H"]:
+                buffer.append((item, tid))
+                
+                # 当 Buffer 达到推理批次大小时进行处理
+                if len(buffer) >= INFERENCE_BATCH_SIZE:
+                    process_batch(buffer, model, device, frontend, tokenizer, calc, out_f, OUTPUT_PT_DIR)
+                    buffer = []
+                    
+        # 处理剩余 buffer
+        if buffer: 
+            process_batch(buffer, model, device, frontend, tokenizer, calc, out_f, OUTPUT_PT_DIR)
 
     dist.barrier()
     if rank == 0:
@@ -161,6 +186,6 @@ def main():
                 if os.path.exists(tmp):
                     with open(tmp, 'r') as ft: f_out.write(ft.read())
                     os.remove(tmp)
-        print(f"--> DONE. Final total targeted at ~700k lines.")
+        print(f"--> DONE. Total data is now 4x original.")
 
 if __name__ == "__main__": main()

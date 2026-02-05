@@ -1,6 +1,5 @@
 #!/bin/bash
 
-# ================= 信号捕获与清理 =================
 cleanup() {
     echo ""
     echo "!!! Caught Ctrl+C/Signal. Killing all background NPU processes... !!!"
@@ -11,10 +10,8 @@ cleanup() {
 
 trap cleanup SIGINT SIGTERM
 
-# ================= 控制参数 =================
-# 现在的控制逻辑仅包含 4 个离散的 Bucket
-# Bucket 1: <5%, 2: 5-10%, 3: 10-20%, 4: >20%
-BUCKETS=(1 2 3 4)
+# 修改为3个bucket
+BUCKETS=(1 3)
 
 NPU_IDS=(0 1 2 3 4 5 6 7)
 WORLD_SIZE=${#NPU_IDS[@]}
@@ -32,7 +29,7 @@ for BUCKET in "${BUCKETS[@]}"; do
     OUT_DIR="${run_dir}/data/test-clean/test_bucket_control/simulator_B${BUCKET}"
     
     echo "=========================================================="
-    echo "--> [Task] Processing Bucket: $BUCKET (1:<5%, 2:5-10%, 3:10-20%, 4:>20%)"
+    echo "--> [Task] Processing Bucket: $BUCKET "
     mkdir -p "$OUT_DIR"
 
     # 清理旧数据

@@ -153,7 +153,7 @@ class CTCTransformerSimulator(nn.Module):
         self.text_input_proj = nn.Linear(config.ctc_vocab_size, config.d_model)
         self.text_pos_encoder = PositionalEncoding(config.d_model, config.dropout, config.max_len)
         
-        self.condition_projector = nn.Embedding(5, config.d_model) # 0用于padding，1-4是id，共5个
+        self.condition_projector = nn.Embedding(4, config.d_model) # 0用于padding，1-3是id，共4个
         
         self.encoder_layers = nn.ModuleList([
             ManualEncoderLayer(config.d_model, config.n_head, config.dim_feedforward, config.dropout)

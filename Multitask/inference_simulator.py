@@ -13,8 +13,8 @@ from simulator.config import SimulatorConfig
 from model.tokenizer import SenseVoiceTokenizer
 
 # ================= 配置 =================
-CHECKPOINT_PATH = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/exp/simulator_ar_control_feedback_fromAR_20260112-1815/checkpoints/step_14287/pytorch_model.bin/pytorch_model.bin"
-TOKENIZER_PATH = "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
+CHECKPOINT_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/exp/simulator_ar_control_augmentation_20260205-1208/checkpoints/step_38880/pytorch_model.bin/pytorch_model.bin"
+TOKENIZER_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
 BATCH_SIZE = 16 
 TOP_K_SPARSE = 10 
 VOCAB_SIZE_BASE = 25055 
@@ -32,52 +32,68 @@ CONFIG = SimulatorConfig(
 )
 
 class InferenceDataset(Dataset):
-    def __init__(self, lines):
+    def __init__(self, lines, tokenizer, max_len=160):
         self.lines = lines
+        self.tokenizer = tokenizer
+        self.max_len = max_len
     
     def __len__(self): return len(self.lines)
 
     def _restore_text_onehot(self, ids: np.ndarray):
         L = ids.shape[0]
         dense_text = torch.zeros((L, VOCAB_SIZE_BASE), dtype=torch.float32)
-        t_ids = torch.from_numpy(ids.astype(np.int64)).unsqueeze(1)
-        dense_text.scatter_(1, t_ids, 1.0)
+        if L > 0:
+            t_ids = torch.from_numpy(ids.astype(np.int64)).unsqueeze(1)
+            dense_text.scatter_(1, t_ids, 1.0)
         return dense_text
 
     def __getitem__(self, idx):
         try:
             item = json.loads(self.lines[idx])
-            data = torch.load(item['psd_path'], map_location='cpu')
-            text_ids = data['text_ids'][:160]
+            # [核心修复] 直接从 jsonl 获取文本，不再尝试加载不存在的 .pt 文件
+            text = item.get('target', item.get('GT', ''))
+            processed_text = text.lower().replace("'", "")
+            
+            # 获取 ID 序列
+            raw_tokens = self.tokenizer.encode(processed_text)
+            
+            # [严格一致性] 过滤 0 和 25055，确保输入特征与训练时完全一致
+            token_ids = [x for x in raw_tokens if x != 0 and x != 25055]
+            text_ids = np.array(token_ids, dtype=np.int32)[:self.max_len]
+            
             return {
                 "key": item['key'], 
                 "text_onehot": self._restore_text_onehot(text_ids), 
-                "text_ids": text_ids, # [新增] 保持原始 ID
+                "text_ids": text_ids,
                 "item": item
             }
-        except: return None
+        except Exception as e:
+            return None
 
 def collate_fn(batch):
     batch = [b for b in batch if b is not None]
     if not batch: return None
     text_list = [b['text_onehot'] for b in batch]
     text_padded = pad_sequence(text_list, batch_first=True, padding_value=0.0)
-    mask = torch.arange(text_padded.size(1)).expand(len(batch), -1) < torch.tensor([t.size(0) for t in text_list]).unsqueeze(1)
+    # 计算 mask
+    lens = torch.tensor([t.size(0) for t in text_list])
+    mask = torch.arange(text_padded.size(1)).expand(len(batch), -1) < lens.unsqueeze(1)
     return {
         "keys": [b['key'] for b in batch], 
         "text_onehot": text_padded, 
         "text_mask": mask.float(), 
-        "text_ids": [b['text_ids'] for b in batch], # [新增]
+        "text_ids": [b['text_ids'] for b in batch],
         "items": [b['item'] for b in batch]
     }
 
 def save_sparse_tensor(tensor, path, text_ids):
+    # [核心逻辑] 保持 Top-10 保存，确保 pt.py 可以正确恢复
     val, idx = torch.topk(tensor, TOP_K_SPARSE, dim=-1)
     torch.save({
         'psd_indices': idx.cpu().numpy().astype(np.int32),
         'psd_values': val.cpu().numpy().astype(np.float16),
         'shape': list(tensor.shape),
-        'text_ids': text_ids.astype(np.int32) # [关键修复] 将文本 ID 存入新文件
+        'text_ids': text_ids.astype(np.int32) 
     }, path)
 
 def main():
@@ -87,8 +103,7 @@ def main():
     parser.add_argument("--device_id", type=int, required=True)
     parser.add_argument("--input_jsonl", type=str, required=True)
     parser.add_argument("--output_dir", type=str, required=True)
-    # [修改] 替换 SDI/WER 参数为离散的 bucket_id (1, 2, 3, 4)
-    parser.add_argument("--bucket_id", type=int, default=1, choices=[1, 2, 3, 4], help="Bucket ID for error control")
+    parser.add_argument("--bucket_id", type=int, default=1)
     args = parser.parse_args()
 
     device = torch.device(f"npu:{args.device_id}")
@@ -98,50 +113,56 @@ def main():
     CONFIG.vocab_size = tokenizer.vocab_size
     model = CTCTransformerSimulator(CONFIG)
     
+    # 加载权重
     sd = torch.load(CHECKPOINT_PATH, map_location='cpu')
     model.load_state_dict({k.replace("simulator.", "").replace("module.", ""): v for k, v in sd.items()})
     model.to(device).eval()
 
-    # [删除] 移除旧的连续值 cond 构造逻辑
-
     with open(args.input_jsonl, 'r', encoding='utf-8') as f:
-        lines = f.readlines()[args.rank::args.world_size]
+        all_lines = f.readlines()
+    lines = all_lines[args.rank::args.world_size]
     
-    loader = DataLoader(InferenceDataset(lines), batch_size=BATCH_SIZE, collate_fn=collate_fn, num_workers=4)
+    # 传入 tokenizer 修复加载逻辑
+    dataset = InferenceDataset(lines, tokenizer, max_len=160)
+    loader = DataLoader(dataset, batch_size=BATCH_SIZE, collate_fn=collate_fn, num_workers=4)
+    
     temp_jsonl = os.path.join(args.output_dir, f"temp_npu{args.device_id}.jsonl")
-
     os.makedirs(args.output_dir, exist_ok=True)
+
     with open(temp_jsonl, 'w', encoding='utf-8') as f_out:
         for batch in tqdm(loader, desc=f"NPU {args.device_id}"):
             if batch is None: continue
+            
             with torch.no_grad():
-                # [修改] 构造 batch 维度的 bucket_id Tensor (LongTensor)
                 b_size = len(batch['keys'])
                 bucket_id_batch = torch.full((b_size,), args.bucket_id, device=device, dtype=torch.long)
                 
-                # [修改] 调用 inference 时使用 bucket_id 参数
                 probs_b = model.inference(
                     batch['text_onehot'].to(device), 
                     batch['text_mask'].to(device), 
                     bucket_id=bucket_id_batch, 
                     max_len=160, 
-                    temperature=0.5
+                    temperature=1
                 )
             
             for i, key in enumerate(batch['keys']):
                 probs = probs_b[i]
-                # [EOS 处理] 保持原逻辑不变
+                
+                # EOS 截断处理
                 pred_ids = probs.argmax(dim=-1)
                 eos_indices = (pred_ids == 25055).nonzero(as_tuple=True)[0]
                 if len(eos_indices) > 0:
                     valid_len = eos_indices[0].item()
                     probs = probs[:valid_len, :]
                 
+                # 保存为 .pt，包含 text_ids 和 Top-10 PSD
                 save_path = os.path.join(args.output_dir, f"{key}.pt")
                 save_sparse_tensor(probs, save_path, batch['text_ids'][i])
                 
+                # 更新 jsonl 信息
                 item = batch['items'][i].copy()
                 item['sim_psd_path'] = save_path
+                item['bucket_id'] = args.bucket_id
                 f_out.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 if __name__ == "__main__":
