@@ -12,7 +12,7 @@ export OMP_NUM_THREADS=1
 export TASK_QUEUE_ENABLE=2
 export ASCEND_LAUNCH_BLOCKING=1
 export CPU_AFFINITY_CONF=2  
-run_dir=/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask # change this to your local dir
+run_dir=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask # change this to your local dir
 cd $run_dir
 code_dir=.
 #dataset=multitask_large
@@ -21,23 +21,25 @@ task=asr
 if [ "$dataset" = "asr" ] || [ "$dataset" = "multitask_large" ]; then
     # train_scp_file_path=/aistor/sjtu/hpc_stor01/home/yangyi/data/${dataset}/train
     # train_scp_file_path=/aistor/sjtu/hpc_stor01/home/yangyi/data/asr/GT/train
-    train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/train"
+    train_scp_file_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/libri_sim_real/simulator_B1"
+    #引入B2作为困难数据
+    train_scp_extra_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/libri_sim_real/simulator_B2"
     # dev_scp_file_path=/aistor/sjtu/hpc_stor01/home/yangyi/data/${dataset}/dev
     # dev_scp_file_path=/aistor/sjtu/hpc_stor01/home/yangyi/data/asr/GT/dev
-    dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
+    dev_scp_file_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/dev/dev_bucket_control/simulator_B1"
 else
     train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
     dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
 fi
 
-train_max_frame_length=1500 # you can change this accroding to your process memory
+train_max_frame_length=1000 # you can change this accroding to your process memory
 eval_max_frame_length=2500
 multitask_prompt_path=conf/multiprompt.jsonl
 
 projector=linear-silu # simple linear for ctc head, linear is normal type, cross-attention 
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
-use_peft=false # For llm
+use_peft=true # For llm
 use_emb=false # For llm input_embs
 gt_emb=true # whether use gt's emb as input
 gt_emb_noise=false # whether use noise
@@ -54,20 +56,20 @@ deepspeed_config=conf/ds_config.json
 
 # Choose Encoder
 encoder_name=sensevoice
-speech_encoder_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall
+speech_encoder_path=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall
 encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
 
 # Choose LLM
 llm_name=Qwen2.5-1.5B-Instruct
-llm_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/Qwen2.5-1.5B-Instruct
+llm_path=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/Qwen/Qwen2.5-1.5B-Instruct
 llm_dim=1536 #151936 # 1536 3584
 model_factory=model/ps-slm.py:model_factory # create your own model_factory
 
 # prompt_style='<|im_start|>user\\n<speech>{}<|im_end|>\\n<|im_start|>assistant\\n' # audio first
 prompt_fig=instruction_first
 
-output_dir=${code_dir}/exp/$(date +"%Y%m%d-%H%M")-$dataset-lora${use_peft}_${task}_instruct_do_psd_${do_psd}_ds_${encoder_projector_ds_rate}_ctc_posterior_${ctc_posterior}_voca_trans_${voca_trans}_${prompt_fig}
+output_dir=${code_dir}/exp/company_enhancedTASU/B1B2-$(date +"%Y%m%d-%H%M")
 
 hydra_args="
 hydra.run.dir=$output_dir \
@@ -86,6 +88,7 @@ hydra.run.dir=$output_dir \
 ++dataset_config.eval_max_frame_length=$eval_max_frame_length \
 ++dataset_config.multitask_prompt_path=$multitask_prompt_path \
 ++dataset_config.train_scp_file_path=$train_scp_file_path \
+++dataset_config.train_scp_extra_path=$train_scp_extra_path \
 ++dataset_config.dev_scp_file_path=$dev_scp_file_path \
 ++train_config.model_name=ps-slm \
 ++train_config.num_epochs=5 \
@@ -111,31 +114,31 @@ hydra.run.dir=$output_dir \
 
 export PATH=/usr/local/python3.10.15/bin:$PATH #PATH环境变量不同，修复PATH
 # if you want to run on local, then:
-deepspeed \
-    --num_gpus 8 \
-    $code_dir/finetune_deepspeed.py \
-    ++train_config.enable_fsdp=false \
-    ++train_config.enable_ddp=true \
-    ++train_config.use_fp16=$use_fp16 \
-    ++deepspeed_config=$deepspeed_config \
-    ${hydra_args}
-
-# if you run on vc slurms, then:
-
-# HOST_FILE="/tmp/"${JobID}                        
- 
-# echo "${VC_MASTER_HOSTS} slots=${GPU_PER_TASK}" > ${HOST_FILE}
-# echo "${VC_WORKER_HOSTS}" | awk -F ',' -v gpu_num=$GPU_PER_TASK '{for (i=1; i<=NF; i++) print $i" slots="gpu_num}' >> ${HOST_FILE}
-
 # deepspeed \
-#     --node_rank=$RANK \
-#     --master_addr $MASTER_ADDR \
-#     --master_port $MASTER_PORT \
-#     --hostfile $HOST_FILE \
-#     --no_ssh \
+#     --num_gpus 8 \
 #     $code_dir/finetune_deepspeed.py \
 #     ++train_config.enable_fsdp=false \
 #     ++train_config.enable_ddp=true \
 #     ++train_config.use_fp16=$use_fp16 \
 #     ++deepspeed_config=$deepspeed_config \
 #     ${hydra_args}
+
+# if you run on vc slurms, then:
+
+HOST_FILE="/tmp/"${JobID}                        
+ 
+echo "${VC_MASTER_HOSTS} slots=${GPU_PER_TASK}" > ${HOST_FILE}
+echo "${VC_WORKER_HOSTS}" | awk -F ',' -v gpu_num=$GPU_PER_TASK '{for (i=1; i<=NF; i++) print $i" slots="gpu_num}' >> ${HOST_FILE}
+
+deepspeed \
+    --node_rank=$RANK \
+    --master_addr $MASTER_ADDR \
+    --master_port $MASTER_PORT \
+    --hostfile $HOST_FILE \
+    --no_ssh \
+    $code_dir/finetune_deepspeed.py \
+    ++train_config.enable_fsdp=false \
+    ++train_config.enable_ddp=true \
+    ++train_config.use_fp16=$use_fp16 \
+    ++deepspeed_config=$deepspeed_config \
+    ${hydra_args}

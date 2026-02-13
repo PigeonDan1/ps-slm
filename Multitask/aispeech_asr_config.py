@@ -42,8 +42,8 @@ class ModelConfig:
 @dataclass
 class PeftConfig:
     peft_method: str = "lora" # None , llama_adapter, prefix
-    r: int = 64
-    lora_alpha: int = 16
+    r: int =16
+    lora_alpha: int = 32
     target_modules: List = field(default_factory=lambda: [ "q_proj","k_proj", "v_proj", "o_proj", "up_proj","gate_proj","down_proj"])
     bias: str = "none"
     task_type: str = "CAUSAL_LM"
@@ -137,6 +137,7 @@ class DataConfig:
     prompt_style: str = "<|im_start|>user\n{}<speech><|im_end|>\n<|im_start|>assistant\n"
     append_info_tasks : List = field(default_factory=lambda: ["hotword"])
     train_scp_file_path: str = ""
+    train_scp_extra_path: str = "" # 用于课程学习
     dev_scp_file_path: str = ""
     test_scp_file_path: str = ""
     train_split: str = "train"

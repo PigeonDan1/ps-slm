@@ -15,8 +15,8 @@ TOKENIZER_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/model
 VOCAB_SIZE_REAL = 25056 
 
 DATASETS = {
-    "1": os.path.join(BASE_DIR, "simulator_B1", "multitask.jsonl"),
-    "2": os.path.join(BASE_DIR, "simulator_B2", "multitask.jsonl"),
+    # "1": os.path.join(BASE_DIR, "simulator_B1", "multitask.jsonl"),
+    # "2": os.path.join(BASE_DIR, "simulator_B2", "multitask.jsonl"),
     "3": os.path.join(BASE_DIR, "simulator_B3", "multitask.jsonl")
 }
 

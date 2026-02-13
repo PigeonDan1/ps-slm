@@ -42,13 +42,17 @@ class MultiTaskDataset(IterableDataset):
         self.tokenizer = tokenizer
         self.split = split
         self.current_epoch = 0
-        self.wer_levels = [0, 3, 6, 7, 9] 
+        # self.wer_levels = [0, 3, 6, 7, 9] 
 
         # 路径管理
         if split == "train":
             self.data_path = dataset_config.train_scp_file_path
+            self.extra_data_path = dataset_config.train_scp_extra_path if dataset_config.train_scp_extra_path else None
+            print(f"成功加载困难数据集{self.extra_data_path}")
         elif split in ["val", "dev"]:
             self.data_path = dataset_config.dev_scp_file_path
+            self.extra_data_path = dataset_config.train_scp_extra_path if dataset_config.train_scp_extra_path else None
+            print(f"成功加载困难数据集{self.extra_data_path}")
         elif split == "test":
             self.data_path = dataset_config.test_scp_file_path
         
@@ -67,6 +71,9 @@ class MultiTaskDataset(IterableDataset):
 
     def __iter__(self):
         base_jsonl = os.path.join(self.data_path, "multitask.jsonl")
+        extra_jsonl = None
+        if self.split in ["train", "val", "dev"]:
+            extra_jsonl = os.path.join(self.extra_data_path, "multitask.jsonl") if self.extra_data_path else None
         worker_info = torch.utils.data.get_worker_info()
         num_workers = worker_info.num_workers if worker_info else 1
         world_size = dist.get_world_size() if dist.is_initialized() else 1
@@ -74,40 +81,44 @@ class MultiTaskDataset(IterableDataset):
         total_workers = num_workers * world_size
         worker_rank = rank * num_workers + (worker_info.id if worker_info else 0)
 
-        if not os.path.exists(base_jsonl): return
+        b2_ratio = 0.0 #课程学习的困难数据集的比例
+        if self.split in ["train"]:
+            b2_ratio = (self.current_epoch - 1) * 0.05
 
-        # 确定训练活跃档位
-        num_active = min(self.current_epoch + 1, len(self.wer_levels))
-        active_wers = self.wer_levels[:num_active]
+        if not os.path.exists(base_jsonl): 
+            return
 
         with open(base_jsonl, 'r', encoding='utf-8') as f:
+            f_extra = open(extra_jsonl, 'r', encoding='utf-8') if extra_jsonl else None
             for data_index, line in enumerate(f):
-                if (data_index % total_workers) != worker_rank: continue
+                line_extra = f_extra.readline() if f_extra else None #二者指针同步
+                if (data_index % total_workers) != worker_rank: 
+                    continue
                 
-                item = json.loads(line.strip())
+                if line_extra and random.random() < b2_ratio and extra_jsonl and line_extra:
+                    item = json.loads(line_extra.strip())
+                else:
+                    item = json.loads(line.strip())
                 key, task = item["key"], item["task"]
                 
-                # ==========================================
-                # [核心差异逻辑] TASU: 训练走文本(PSD)，推理走音频(Fbank)
-                # ==========================================
                 input_features, input_feature_length = None, None
                 sim_ctc, sim_ctc_len = None, None
 
-                # 情况 A：训练/验证 (走 PSD 文本逻辑)
+                # 情况 A：训练/验证/开发 (统一走 sim_psd_path 逻辑)
                 if self.split in ["train", "val", "dev"]:
-                    if self.split == "train":
-                        target_wer = random.choice(active_wers)
-                        pt_path = os.path.join(self.data_path, f"simulator_WER{target_wer}", f"{key}.pt")
-                    else:
-                        pt_path = item.get("psd_path")
+                    # 1. 放弃 WER 等级随机选择，直接读取 JSON 中的 sim_psd_path
+                    pt_path = item.get("sim_psd_path")
 
                     if pt_path and os.path.exists(pt_path):
                         data = torch.load(pt_path, map_location='cpu')
+                        # 2. 内部逻辑已包含：从 25056 切除至 25055 (indices 中的 25055 被丢弃)
                         sim_ctc = restore_dense_matrix(data['psd_indices'], data['psd_values'])
                         sim_ctc_len = torch.tensor(sim_ctc.size(0), dtype=torch.long)
-                        input_features = torch.zeros(sim_ctc.size(0), 560) # 训练时不需要音频特征
+                        input_features = torch.zeros(sim_ctc.size(0), 560) 
                         input_feature_length = sim_ctc_len
-                    else: continue
+                    else: 
+                        # 如果 sim_psd_path 为空或文件不存在，跳过该样本
+                        continue
 
                 # 情况 B：测试 (走真实音频提取逻辑)
                 else:
@@ -117,7 +128,6 @@ class MultiTaskDataset(IterableDataset):
                         from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
                         frontend = self.kwargs.get("frontend", None)
                         
-                        # 加载音频 (兼容 wav 和 ark)
                         if task in ["QA", "EN2DE"] or ark_path.endswith(".wav"):
                             waveform, _ = torchaudio.load(ark_path)
                             audio_raw = waveform.mean(dim=0) if waveform.shape[0] > 1 else waveform.squeeze(0)
@@ -128,22 +138,24 @@ class MultiTaskDataset(IterableDataset):
                         fbank, fbank_len = extract_fbank(audio_list, data_type="sound", frontend=frontend)
                         input_features, input_feature_length = fbank[0], fbank_len[0]
                     except Exception as e:
-                        print(f"[SKIP] key={key} err={e}"); continue
+                        print(f"[SKIP] key={key} err={e}")
+                        continue
 
-                # ==========================================
-                # [公共逻辑] Prompt 处理、ASR 清洗、Label Masking
-                # ==========================================
+                # Prompt 处理逻辑保持不变
                 prompt = random.choice(self.multitask_prompt_list[task])
-                if task == "QA": prompt += f"\n\nTask: {item['task']}\n{item['prompt']}"
-                prompt = self.prompt_template.format(prompt) # 确保包含 <speech>
-                if task in self.append_info_tasks: prompt = prompt.format(item[task])
+                if task == "QA": 
+                    prompt += f"\n\nTask: {item['task']}\n{item['prompt']}"
+                prompt = self.prompt_template.format(prompt)
+                if task in self.append_info_tasks: 
+                    prompt = prompt.format(item[task])
 
                 prompt_ids = self.tokenizer.encode(prompt)
                 prompt_ids_tensor = torch.tensor(prompt_ids)
 
                 target_text = item["target"]
                 if not self.inference_mode:
-                    if task == "ASR": target_text = re.sub(r"[^A-Za-z\s.,!?']+", "", target_text).lower().strip()
+                    if task == "ASR": 
+                        target_text = re.sub(r"[^A-Za-z\s.,!?']+", "", target_text).lower().strip()
                     target_ids = self.tokenizer.encode(target_text) + [self.tokenizer.eos_token_id]
                     input_ids = torch.cat([prompt_ids_tensor, torch.tensor(target_ids)])
                 else:

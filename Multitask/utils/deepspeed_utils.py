@@ -176,10 +176,10 @@ def train(
         if hasattr(raw_dataset, 'set_epoch'):
             if rank == 0:
                 # 获取当前 Epoch 激活的 WER 级别（仅用于日志打印）
-                active_wers = raw_dataset.wer_levels[:min(epoch + 1, len(raw_dataset.wer_levels))]
+                # active_wers = raw_dataset.wer_levels[:min(epoch + 1, len(raw_dataset.wer_levels))]
                 logger.info(f"\n" + "="*50)
                 logger.info(f"--> [Curriculum] Epoch {epoch+1} Started")
-                logger.info(f"--> [Curriculum] Active WER Levels: {active_wers}")
+                # logger.info(f"--> [Curriculum] Active WER Levels: {active_wers}")
                 logger.info("="*50)
                 
             raw_dataset.set_epoch(epoch)
