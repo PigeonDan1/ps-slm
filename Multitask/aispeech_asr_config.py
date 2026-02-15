@@ -144,6 +144,7 @@ class DataConfig:
     dev_split: str = "dev"
     test_split:str = "test"
     pad_or_trim: bool = True
+    use_real_ctc: bool = False
     prompt: Optional[str] = None
     inference_mode: bool = False
     lower: bool = False

@@ -39,7 +39,7 @@ multitask_prompt_path=conf/multiprompt.jsonl
 projector=linear-silu # simple linear for ctc head, linear is normal type, cross-attention 
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
-use_peft=true # For llm
+use_peft=false # For llm
 use_emb=false # For llm input_embs
 gt_emb=true # whether use gt's emb as input
 gt_emb_noise=false # whether use noise
@@ -51,6 +51,7 @@ freeze_projector=false
 do_psd=true # whether use psd to ds
 ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
+use_real_ctc=true
 # use absolute path
 deepspeed_config=conf/ds_config.json
 
@@ -69,7 +70,10 @@ model_factory=model/ps-slm.py:model_factory # create your own model_factory
 # prompt_style='<|im_start|>user\\n<speech>{}<|im_end|>\\n<|im_start|>assistant\\n' # audio first
 prompt_fig=instruction_first
 
-output_dir=${code_dir}/exp/company_enhancedTASU/B1B2-$(date +"%Y%m%d-%H%M")
+peft_tag=$([ "$use_peft" = "true" ] && echo "lora" || echo "nolora")
+ctc_tag=$([ "$use_real_ctc" = "true" ] && echo "realctc" || echo "simctc")
+
+output_dir=${code_dir}/exp/company/${peft_tag}_${ctc_tag}-$(date +"%Y%m%d-%H%M")
 
 hydra_args="
 hydra.run.dir=$output_dir \
@@ -90,6 +94,7 @@ hydra.run.dir=$output_dir \
 ++dataset_config.train_scp_file_path=$train_scp_file_path \
 ++dataset_config.train_scp_extra_path=$train_scp_extra_path \
 ++dataset_config.dev_scp_file_path=$dev_scp_file_path \
+++dataset_config.use_real_ctc=$use_real_ctc \
 ++train_config.model_name=ps-slm \
 ++train_config.num_epochs=5 \
 ++train_config.freeze_encoder=$freeze_encoder \

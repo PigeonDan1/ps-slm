@@ -42,6 +42,8 @@ class MultiTaskDataset(IterableDataset):
         self.tokenizer = tokenizer
         self.split = split
         self.current_epoch = 0
+        self.use_real_ctc = dataset_config.get("use_real_ctc", False) # 默认关闭，使用仿真数据
+        print(f"是否use_real_ctc? {self.use_real_ctc}")
         # self.wer_levels = [0, 3, 6, 7, 9] 
 
         # 路径管理
@@ -104,20 +106,19 @@ class MultiTaskDataset(IterableDataset):
                 input_features, input_feature_length = None, None
                 sim_ctc, sim_ctc_len = None, None
 
-                # 情况 A：训练/验证/开发 (统一走 sim_psd_path 逻辑)
+                # 情况 A：训练/验证/开发
                 if self.split in ["train", "val", "dev"]:
-                    # 1. 放弃 WER 等级随机选择，直接读取 JSON 中的 sim_psd_path
-                    pt_path = item.get("sim_psd_path")
+                    path_key = "psd_path" if self.use_real_ctc else "sim_psd_path"
+                    pt_path = item.get(path_key)
 
                     if pt_path and os.path.exists(pt_path):
-                        data = torch.load(pt_path, map_location='cpu')
+                        data = torch.load(pt_path, map_location='cpu', weights_only=False)
                         # 2. 内部逻辑已包含：从 25056 切除至 25055 (indices 中的 25055 被丢弃)
                         sim_ctc = restore_dense_matrix(data['psd_indices'], data['psd_values'])
                         sim_ctc_len = torch.tensor(sim_ctc.size(0), dtype=torch.long)
                         input_features = torch.zeros(sim_ctc.size(0), 560) 
                         input_feature_length = sim_ctc_len
                     else: 
-                        # 如果 sim_psd_path 为空或文件不存在，跳过该样本
                         continue
 
                 # 情况 B：测试 (走真实音频提取逻辑)
