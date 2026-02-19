@@ -23,13 +23,13 @@ from model.tokenizer import SenseVoiceTokenizer
 from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
 
 # ================= 配置 =================
-BASE_WORK_DIR = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask"
+BASE_WORK_DIR = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask"
 OUTPUT_DATA_DIR = os.path.join(BASE_WORK_DIR, "data")
 SOURCE_FILES = {
-    "train": "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/train/multitask.jsonl",
-    "dev": "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/dev/multitask.jsonl"
+    "train": "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/train/multitask.jsonl",
+    "dev": "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/dev/multitask.jsonl"
 }
-MODEL_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
+MODEL_PATH = "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
 BLANK_THRESHOLD = 0.90
 TOP_K = 10 
 
@@ -198,45 +198,40 @@ def main():
         print("--> All Done. Files merged successfully.", flush=True)
 
 def add_wer_info():
-    calc = pt.Calculator() # 使用 pt.py 中的计算器
-    
-    for split, input_path in SOURCE_FILES.items():
+    calc = pt.Calculator()
+    for split in SOURCE_FILES:
+        # 修改点 1：读取 main() 产出的位于 data 目录下的新文件
+        input_path = os.path.join(OUTPUT_DATA_DIR, split, "multitask.jsonl")
         if not os.path.exists(input_path):
-            print(f"Skipping {split}: file not found at {input_path}")
             continue
             
-        # 安全起见，输出到新文件
+        # 修改点 2：输出也放在 data 目录下，避免污染原始 medical 目录
         output_path = input_path.replace(".jsonl", "_with_wer.jsonl")
-        print(f"\n--> Processing {split} | Output: {output_path}")
+        print(f"--> Processing {split} | Input: {input_path}")
         
         with open(input_path, 'r', encoding='utf-8') as f_in, \
              open(output_path, 'w', encoding='utf-8') as f_out:
-            
-            for line in tqdm(f_in):
+            for line in tqdm(f_in, desc=f"WER {split}"):
                 item = json.loads(line.strip())
                 psd_path = item.get('psd_path')
-                
                 if psd_path and os.path.exists(psd_path):
-                    # 调用 pt.py 修复后的 restore_ids
                     hyp, ref = pt.restore_ids(psd_path)
-                    
                     if hyp is not None and ref is not None:
-                        # 计算 BPE 级别的 SDI 统计
                         res = calc.calculate(ref, hyp)
                         n = res['all']
-                        
-                        # 构造符合 dataset.py 预期的 bpe_error 结构
                         item['bpe_error'] = {
-                            "RefLen": n,
-                            "S": res['sub'],
-                            "D": res['del'],
-                            "I": res['ins'],
+                            "RefLen": n, "S": res['sub'], "D": res['del'], "I": res['ins'],
                             "WER": (res['sub'] + res['del'] + res['ins']) / n if n > 0 else 0.0
                         }
-                
-                # 写入新文件
                 f_out.write(json.dumps(item, ensure_ascii=False) + '\n')
 
 if __name__ == "__main__":
-    # main()
-    add_wer_info()
+    # 步骤 A: 所有进程一起跑模型（生成 .pt）
+    main()
+    
+    # 步骤 B: 只有 Rank 0 负责最后的 WER 计算（避免 8 张卡同时写一个文件写坏了）
+    import torch.distributed as dist
+    if not dist.is_initialized() or dist.get_rank() == 0:
+        print("\n--> [Rank 0] Starting WER calculation...")
+        add_wer_info()
+        print("--> All process finished successfully.")

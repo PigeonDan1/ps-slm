@@ -22,16 +22,9 @@ if [ "$dataset" = "asr" ] || [ "$dataset" = "multitask_large" ]; then
     train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/train"    
     dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
     data_tag="libri"
-    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/librispeech/train/simulator_B1_origin10k"
-    # train_scp_extra_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/librispeech/train/simulator_B2_origin10k"    
-    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
-    # data_tag="libri_sim"
     # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/train"
     # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/dev"
     # data_tag="medical"
-    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical/train/simulator_B1"    
-    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/dev"
-    # data_tag="medical_sim"
 else
     train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
     dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
@@ -57,7 +50,7 @@ freeze_projector=false
 do_psd=true # whether use psd to ds
 ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
-use_real_ctc=true # whether use simulated ctc
+use_real_ctc=true # whether use real ctc
 text_only_sft=false # whether only peft LLM
 skip_encoder=true # whether use pepared ctc data
 # use absolute path

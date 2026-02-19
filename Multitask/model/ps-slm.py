@@ -162,9 +162,41 @@ def model_factory(train_config, model_config, **kwargs):
     patch_npu_flash_attn()
     ckpt_path = kwargs.get( "ckpt_path", None)
     if ckpt_path is not None:
-        logger.info("loading other parts from: {}".format(ckpt_path))
+        logger.info("loading checkpoint from: {}".format(ckpt_path))
         ckpt_dict = torch.load(ckpt_path, map_location="cpu")
-        model.load_state_dict(ckpt_dict, strict=False)
+        
+        # 1. 自动处理 DeepSpeed 带来的 module. 前缀
+        model_keys = list(model.state_dict().keys())
+        ckpt_keys = list(ckpt_dict.keys())
+        
+        # 探测前缀差异
+        m_has_module = any(k.startswith("module.") for k in model_keys)
+        c_has_module = any(k.startswith("module.") for k in ckpt_keys)
+        
+        new_ckpt_dict = {}
+        for k, v in ckpt_dict.items():
+            new_k = k
+            # 处理 module.
+            if m_has_module and not c_has_module:
+                new_k = "module." + new_k
+            elif not m_has_module and c_has_module:
+                new_k = new_k.replace("module.", "")
+                
+            # [关键修复] 处理可能的 .model.model. 冗余路径
+            # 如果模型中是 .model.layers. 而 ckpt 中是 .model.model.layers.
+            if ".model.model.layers." in new_k:
+                # 请根据你 Missing keys 的提示确认模型实际需要的路径
+                # 如果模型报错找不到 .model.model.，则尝试简化它
+                pass 
+
+            new_ckpt_dict[new_k] = v
+
+        # 2. 执行加载并强制检查匹配情况
+        load_result = model.load_state_dict(new_ckpt_dict, strict=False)
+        
+        # 3. 打印关键检查：LoRA 到底匹配上没？
+        matched_lora = [k for k in new_ckpt_dict.keys() if "lora" in k and k in model_keys]
+        logger.info(f"Successfully matched {len(matched_lora)} LoRA keys!")
 
     print_model_size(
         model,
@@ -425,9 +457,24 @@ class slam_model_asr(torch.nn.Module):
                 ):
         # input features: [bs, audio_lengths，560] , input_length: [bs]
         
-        # [修改点 1] 判断是否使用模拟数据
-        # 如果配置开启且数据不为空，标记为使用模拟数据
-        use_sim_mode = getattr(self.train_config, "use_simulated_ctc", False) and sim_ctc is not None
+        if getattr(self.train_config, "text_only_sft", False) and self.training:
+            inputs_embeds = self.llm.get_input_embeddings()(input_ids)
+            model_outputs = self.llm(
+                inputs_embeds=inputs_embeds, 
+                attention_mask=attention_mask, 
+                labels=labels, 
+                position_ids=position_ids
+            )
+            
+            acc = -1
+            if self.metric:
+                with torch.no_grad():
+                    preds = torch.argmax(model_outputs.logits, -1)
+                    acc = compute_accuracy(preds.detach()[:, :-1], labels.detach()[:, 1:], ignore_label=self.tokenizer.default_ignore_token)
+            return model_outputs, acc
+
+        # 判断是否使用已经提取好的CTC数据
+        use_sim_mode = getattr(self.train_config, "skip_encoder", False) and sim_ctc is not None
 
         if use_sim_mode:
             # 如果使用模拟数据，完全跳过音频编码器的计算
@@ -471,7 +518,7 @@ class slam_model_asr(torch.nn.Module):
         if self.ctc_posterior:
             # print("Use CTC Posterior ...")
             if self.voca_trans == False: 
-                if self.gt_emb and not use_sim_mode: # [修改点 2] 只有非模拟模式才进 GT 分支
+                if self.gt_emb and not use_sim_mode: # 只有非模拟模式才进 GT 分支
                     # print("Use Groundtruth Embeddings...")
                     texts = GT
                     device = labels.device
@@ -483,8 +530,7 @@ class slam_model_asr(torch.nn.Module):
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
                 
                 elif use_sim_mode: 
-                    # [修改点 3] 新增分支：直接使用模拟 PSD_CTC
-                    # print("Use Simulated PSD_CTC (Skipping Encoder & PSD)...")
+                    # 直接使用模拟 PSD_CTC
                     encoder_outs = sim_ctc
                     encoder_feature_length = sim_ctc_len
                     # 注意：sim_ctc 已经是 [B, T, 25055] 的概率分布，且已经是 PSD 处理过的，无需再处理

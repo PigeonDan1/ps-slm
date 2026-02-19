@@ -120,7 +120,7 @@ class TrainConfig:
     freeze_encoder:bool = False
     device: Optional[int] = 0 
     gaussian_sim: bool = False
-    use_simulated_ctc: bool = False
+    skip_encoder: bool = False
 
 
 @dataclass
@@ -145,6 +145,7 @@ class DataConfig:
     test_split:str = "test"
     pad_or_trim: bool = True
     use_real_ctc: bool = False
+    text_only_sft: bool = False
     prompt: Optional[str] = None
     inference_mode: bool = False
     lower: bool = False
@@ -160,8 +161,6 @@ class DataConfig:
     normalize: Optional[bool] = field(default=False, metadata={
         "help": "whether input is normalized, used for models such as wavlm"
     })
-    use_simulated_ctc: bool = False
-
 
 @dataclass
 class FSDPConfig:

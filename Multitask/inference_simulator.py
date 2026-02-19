@@ -13,8 +13,8 @@ from simulator.config import SimulatorConfig
 from model.tokenizer import SenseVoiceTokenizer
 
 # ================= 配置 =================
-CHECKPOINT_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/exp/Lr2e_4_correctDataDistribution/checkpoints/step_38880/pytorch_model.bin/pytorch_model.bin"
-TOKENIZER_PATH = "/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall"
+CHECKPOINT_PATH = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/simulator_ckpt/pytorch_model.bin"
+TOKENIZER_PATH = "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
 BATCH_SIZE = 16 
 TOP_K_SPARSE = 10 
 VOCAB_SIZE_BASE = 25055 
@@ -142,7 +142,7 @@ def main():
                     batch['text_mask'].to(device), 
                     bucket_id=bucket_id_batch, 
                     max_len=160, 
-                    temperature=1
+                    temperature=0.5
                 )
             
             for i, key in enumerate(batch['keys']):

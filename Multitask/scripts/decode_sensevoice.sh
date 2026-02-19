@@ -1,24 +1,25 @@
 #!/bin/bash
-run_dir=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask # change this to your local dir
+run_dir=/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask # change this to your local dir
 cd  $run_dir
 code_dir=.
 
 projector=linear-silu #simple_linear
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt # need to load pretrained ctc head if ctc head is frozen
 
-use_peft=true
+use_peft=false
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=1500
-ckpt_path=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/exp/company_enhancedTASU/B1B2-20260213-0150/ps-slm_epoch_3_step_2000
+ckpt_path=/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/company/exp1_simulator/company_exp1_sim_phase1
+
 task=asr
 split=test-other
-dataset=librispeech
+dataset=medical
 
 # TBD: u should change paths to your own paths
 if [ "$task" = "asr" ]; then
     if [ "$dataset" = "librispeech" ]; then
-        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/${split}/"
+        test_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/${split}"
     elif [ "$dataset" = "commonvoice" ]; then
         test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/common_voice/${split}/"
     elif [ "$dataset" = "slidespeech" ]; then
@@ -30,7 +31,7 @@ if [ "$task" = "asr" ]; then
     elif [ "$dataset" = "TED" ]; then
         test_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/tedlium3/"
     elif [ "$dataset" = "medical" ]; then
-        test_scp_file_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/dataset_reproduce/medical_test/"
+        test_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/test"
     elif [ "$dataset" = "gigaspeech" ]; then
         test_scp_file_path="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/dataset_reproduce/gigaspeech_test/"
     fi
@@ -46,7 +47,7 @@ fi
 
 # Choose Encoder
 encoder_name=sensevoice
-speech_encoder_path=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/iic/SenseVoiceSmall
+speech_encoder_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall
 encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1
 
@@ -55,17 +56,18 @@ ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 top1_emb=false
 llm_name="Qwen2.5-1.5B-Instruct"
-llm_path=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/.cache/modelscope/hub/models/Qwen/Qwen2.5-1.5B-Instruct
+llm_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/Qwen2.5-1.5B-Instruct
 llm_dim=1536 #151936 #1536 3584
 model_factory=model/ps-slm.py:model_factory # u can also create your own model_factory
 run_decode_device=0  # run decode on certain device
 # decode_log=$ckpt_path/decode_${dataset}_${task}_${split}
-output_dir=/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/ckpt_text
-decode_log=$output_dir/decode_${dataset}_${task}_${split}
+output_dir="${run_dir}/ckpt_text"
+mkdir -p "$output_dir"
+decode_log="$output_dir/decode_${dataset}_${task}_${split}"
 
 # 1. 定义文件路径
 original_jsonl="${test_scp_file_path}/multitask.jsonl"
-split_base_dir="${test_scp_file_path}_temp_parallel" # 临时根目录
+split_base_dir="${run_dir}/temp_splits_$(date +"%m%d_%H%M")"
 mkdir -p "$split_base_dir"
 
 # 2. 将原始 jsonl 均匀切分为 8 份
@@ -94,7 +96,7 @@ for i in {0..7}; do
     python $code_dir/inference_batch.py \
         hydra.run.dir=$output_dir \
         ++dataset_config.test_scp_file_path="$rank_dir" \
-        ++decode_log=$decode_log \
+        ++decode_log=${decode_log}_${i} \
         ++model_config.file=$model_factory \
         ++model_config.encoder_projector_ds_rate=$encoder_projector_ds_rate \
         ++model_config.llm_path=$llm_path \
@@ -135,10 +137,10 @@ echo "All parallel processes finished."
 > "${decode_log}_gt"
 
 for i in {0..7}; do
-    cat "${decode_log}_pred_${i}" >> "${decode_log}_pred"
-    cat "${decode_log}_gt_${i}" >> "${decode_log}_gt"
+    cat "${decode_log}_${i}_pred" >> "${decode_log}_pred"
+    cat "${decode_log}_${i}_gt" >> "${decode_log}_gt"
     # 删除临时输出分片
-    rm "${decode_log}_pred_${i}" "${decode_log}_gt_${i}"
+    rm "${decode_log}_${i}_pred" "${decode_log}_${i}_gt"
 done
 
 # 6. 删除临时数据文件夹

@@ -11,7 +11,7 @@ cleanup() {
 trap cleanup SIGINT SIGTERM
 
 # 修改为3个bucket
-BUCKETS=(2)
+BUCKETS=(1)
 
 NPU_IDS=(0 1 2 3 4 5 6 7)
 WORLD_SIZE=${#NPU_IDS[@]}
@@ -21,12 +21,12 @@ run_dir=$(cd $(dirname $0)/..; pwd)
 cd $run_dir || exit 1
 
 # 请确保输入文件路径正确
-INPUT_JSONL="/aistor/aispeech/hpc_stor01/home/wangchenghao00sx/workingspace/TASU-simulator/Multitask/data/temp_jsonl/slidespeech_200000.jsonl"
+INPUT_JSONL="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/train/multitask.jsonl"
 
 # ================= 循环执行 =================
 for BUCKET in "${BUCKETS[@]}"; do
     # 修改输出目录名称，以反映 Bucket 档位
-    OUT_DIR="${run_dir}/data/gigaspeech/simulator_B${BUCKET}"
+    OUT_DIR="${run_dir}/data/medical/train/simulator_B${BUCKET}"
     
     echo "=========================================================="
     echo "--> [Task] Processing Bucket: $BUCKET "

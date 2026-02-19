@@ -43,7 +43,9 @@ class MultiTaskDataset(IterableDataset):
         self.split = split
         self.current_epoch = 0
         self.use_real_ctc = dataset_config.get("use_real_ctc", False) # 默认关闭，使用仿真数据
+        self.text_only_sft = dataset_config.get("text_only_sft", False) # 默认关闭，不进行文本微调LLM
         print(f"是否use_real_ctc? {self.use_real_ctc}")
+        print(f"是否text_only_sft? {self.text_only_sft}")
         # self.wer_levels = [0, 3, 6, 7, 9] 
 
         # 路径管理
@@ -53,20 +55,20 @@ class MultiTaskDataset(IterableDataset):
             print(f"成功加载困难数据集{self.extra_data_path}")
         elif split in ["val", "dev"]:
             self.data_path = dataset_config.dev_scp_file_path
-            self.extra_data_path = dataset_config.train_scp_extra_path if dataset_config.train_scp_extra_path else None
-            print(f"成功加载困难数据集{self.extra_data_path}")
+            self.extra_data_path = None
         elif split == "test":
             self.data_path = dataset_config.test_scp_file_path
+            self.extra_data_path = None
         
         self.prompt_template = dataset_config.get("prompt_style", "{}")
         self.inference_mode = dataset_config.get("inference_mode", False)
 
-        # [恢复功能] 为推理模式加载 SenseVoice 前端参数
-        if self.inference_mode or self.split == "test":
+        # 为验证和测试加载 SenseVoice 前端参数
+        if self.inference_mode or self.split in ["test"]:
             self.encoder_path = dataset_config.encoder_path
             from model.SenseVoice import SenseVoiceSmall
             _, kwargs = SenseVoiceSmall.from_pretrained(self.encoder_path)
-            self.kwargs = kwargs # 包含 frontend 信息
+            self.kwargs = kwargs
 
     def set_epoch(self, epoch):
         self.current_epoch = epoch
@@ -74,7 +76,7 @@ class MultiTaskDataset(IterableDataset):
     def __iter__(self):
         base_jsonl = os.path.join(self.data_path, "multitask.jsonl")
         extra_jsonl = None
-        if self.split in ["train", "val", "dev"]:
+        if self.split in ["train"]: # 加入困难数据的课程学习仅限于train，而且是对照组一阶段
             extra_jsonl = os.path.join(self.extra_data_path, "multitask.jsonl") if self.extra_data_path else None
         worker_info = torch.utils.data.get_worker_info()
         num_workers = worker_info.num_workers if worker_info else 1
@@ -83,9 +85,8 @@ class MultiTaskDataset(IterableDataset):
         total_workers = num_workers * world_size
         worker_rank = rank * num_workers + (worker_info.id if worker_info else 0)
 
-        b2_ratio = 0.0 #课程学习的困难数据集的比例
-        if self.split in ["train"]:
-            b2_ratio = (self.current_epoch - 1) * 0.05
+        # 训练阶段的课程学习比例
+        b2_ratio = max(0.0, (self.current_epoch - 1) * 0.05) if self.split == "train" else 0.0
 
         if not os.path.exists(base_jsonl): 
             return
@@ -106,22 +107,28 @@ class MultiTaskDataset(IterableDataset):
                 input_features, input_feature_length = None, None
                 sim_ctc, sim_ctc_len = None, None
 
-                # 情况 A：训练/验证/开发
-                if self.split in ["train", "val", "dev"]:
-                    path_key = "psd_path" if self.use_real_ctc else "sim_psd_path"
-                    pt_path = item.get(path_key)
+                # 训练: 纯文本微调LLM或者PSD（已处理音频）训练speechLLM
+                if self.split in ["train", "val"]:
+                    if self.text_only_sft:
+                        # 纯文本模式构造dummy
+                        input_features = torch.zeros(1, 560)
+                        input_feature_length = torch.tensor(1, dtype=torch.long)
+                    else:
+                        # 原始/仿真音频PSD模式
+                        path_key = "psd_path" if self.use_real_ctc else "sim_psd_path"
+                        pt_path = item.get(path_key)
 
-                    if pt_path and os.path.exists(pt_path):
-                        data = torch.load(pt_path, map_location='cpu', weights_only=False)
-                        # 2. 内部逻辑已包含：从 25056 切除至 25055 (indices 中的 25055 被丢弃)
-                        sim_ctc = restore_dense_matrix(data['psd_indices'], data['psd_values'])
-                        sim_ctc_len = torch.tensor(sim_ctc.size(0), dtype=torch.long)
-                        input_features = torch.zeros(sim_ctc.size(0), 560) 
-                        input_feature_length = sim_ctc_len
-                    else: 
-                        continue
+                        if pt_path and os.path.exists(pt_path):
+                            data = torch.load(pt_path, map_location='cpu', weights_only=False)
+                            # 2. 内部逻辑已包含：从 25056 切除至 25055 (indices 中的 25055 被丢弃)
+                            sim_ctc = restore_dense_matrix(data['psd_indices'], data['psd_values'])
+                            sim_ctc_len = torch.tensor(sim_ctc.size(0), dtype=torch.long)
+                            input_features = torch.zeros(sim_ctc.size(0), 560) 
+                            input_feature_length = sim_ctc_len
+                        else: 
+                            continue
 
-                # 情况 B：测试 (走真实音频提取逻辑)
+                # 测试 (走真实音频提取逻辑)
                 else:
                     ark_path = item["path"]
                     try:
@@ -142,8 +149,9 @@ class MultiTaskDataset(IterableDataset):
                         print(f"[SKIP] key={key} err={e}")
                         continue
 
-                # Prompt 处理逻辑保持不变
-                prompt = random.choice(self.multitask_prompt_list[task])
+                # Prompt首先看用不用medical_SFT。再根据task来
+                prompt_key = "medical_SFT" if (self.text_only_sft) else task
+                prompt = random.choice(self.multitask_prompt_list[prompt_key])
                 if task == "QA": 
                     prompt += f"\n\nTask: {item['task']}\n{item['prompt']}"
                 prompt = self.prompt_template.format(prompt)
