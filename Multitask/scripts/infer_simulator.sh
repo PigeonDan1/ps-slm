@@ -21,12 +21,12 @@ run_dir=$(cd $(dirname $0)/..; pwd)
 cd $run_dir || exit 1
 
 # 请确保输入文件路径正确
-INPUT_JSONL="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/train/multitask.jsonl"
+INPUT_JSONL="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/dev/multitask.jsonl"
 
 # ================= 循环执行 =================
 for BUCKET in "${BUCKETS[@]}"; do
     # 修改输出目录名称，以反映 Bucket 档位
-    OUT_DIR="${run_dir}/data/medical/train/simulator_B${BUCKET}"
+    OUT_DIR="${run_dir}/data/medical/dev/simulator_B${BUCKET}"
     
     echo "=========================================================="
     echo "--> [Task] Processing Bucket: $BUCKET "

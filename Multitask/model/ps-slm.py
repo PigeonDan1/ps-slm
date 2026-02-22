@@ -1,8 +1,3 @@
-# TASU: Text-Only Alignment for Speech Understanding
-# Authors: Jing Peng*, Yi Yang (X-LANCE Lab, Shanghai Jiao Tong University)
-# Repository: https://github.com/PigeonDan1/ps-slm 
-# Adapted from: https://github.com/X-LANCE/SLAM-LLM 
-
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -128,28 +123,22 @@ def setup_llm(train_config, model_config, **kwargs):
 
 
 def model_factory(train_config, model_config, **kwargs):
-    # return necessary components for training
+    print(f"DEBUG: All kwargs keys received by factory: {list(kwargs.keys())}")
+    # 1. 初始化 Tokenizer
     tokenizer = setup_tokenizer(train_config, model_config, **kwargs)
     DEFAULT_SPEECH_TOKEN = "<speech>"
     DEFAULT_IGNORE_TOKEN = -100
     special_tokens_dict = {"additional_special_tokens": [DEFAULT_SPEECH_TOKEN]}
     tokenizer.add_special_tokens(special_tokens_dict)
     tokenizer.default_ignore_token = DEFAULT_IGNORE_TOKEN
-    tokenizer.default_speech_token = tokenizer.convert_tokens_to_ids(
-            DEFAULT_SPEECH_TOKEN
-        )
+    tokenizer.default_speech_token = tokenizer.convert_tokens_to_ids(DEFAULT_SPEECH_TOKEN)
     
-    # llm
+    # 2. 初始化组件
     llm = setup_llm(train_config, model_config, **kwargs)
-
-    # encoder
     encoder = setup_encoder(train_config, model_config, **kwargs)
-    
-    # projector
-    encoder_projector = setup_encoder_projector(
-        train_config, model_config, **kwargs
-    )
+    encoder_projector = setup_encoder_projector(train_config, model_config, **kwargs)
 
+    # 3. 构造主模型
     model = slam_model_asr(
         encoder,
         llm,
@@ -160,52 +149,77 @@ def model_factory(train_config, model_config, **kwargs):
         **kwargs,
     )
     patch_npu_flash_attn()
-    ckpt_path = kwargs.get( "ckpt_path", None)
+
+    # 4. 权重加载与深度审计
+    ckpt_path = kwargs.get("ckpt_path", None)
+    logger.info(f"--> [Loading] Attempting to load checkpoint from: {ckpt_path}")
     if ckpt_path is not None:
-        logger.info("loading checkpoint from: {}".format(ckpt_path))
+        # 强制加载所有权重，即使有些没对上也不要默默失败
         ckpt_dict = torch.load(ckpt_path, map_location="cpu")
         
-        # 1. 自动处理 DeepSpeed 带来的 module. 前缀
-        model_keys = list(model.state_dict().keys())
+        model_state_dict = model.state_dict()
+        model_keys = set(model_state_dict.keys())
         ckpt_keys = list(ckpt_dict.keys())
         
-        # 探测前缀差异
+        # 探测 DeepSpeed 'module.' 前缀
         m_has_module = any(k.startswith("module.") for k in model_keys)
         c_has_module = any(k.startswith("module.") for k in ckpt_keys)
         
         new_ckpt_dict = {}
         for k, v in ckpt_dict.items():
             new_k = k
-            # 处理 module.
+            # A. 处理 module. 前缀
             if m_has_module and not c_has_module:
                 new_k = "module." + new_k
             elif not m_has_module and c_has_module:
                 new_k = new_k.replace("module.", "")
                 
-            # [关键修复] 处理可能的 .model.model. 冗余路径
-            # 如果模型中是 .model.layers. 而 ckpt 中是 .model.model.layers.
-            if ".model.model.layers." in new_k:
-                # 请根据你 Missing keys 的提示确认模型实际需要的路径
-                # 如果模型报错找不到 .model.model.，则尝试简化它
-                pass 
+            # B. 处理 PEFT/LLM 冗余路径 (.model.model.)
+            # 根据你之前的诊断，ckpt 可能包含重复的 .model 结构
+            if ".base_model.model.model.layers." in new_k:
+                target_k = new_k.replace(".base_model.model.model.layers.", ".base_model.model.layers.")
+                # 只有当替换后的键在模型中确实存在时才替换，否则保留原样进行后续 Missing Key 报错
+                if target_k in model_keys:
+                    new_k = target_k
 
             new_ckpt_dict[new_k] = v
 
-        # 2. 执行加载并强制检查匹配情况
+        # 5. 执行加载并获取详细结果
         load_result = model.load_state_dict(new_ckpt_dict, strict=False)
         
-        # 3. 打印关键检查：LoRA 到底匹配上没？
-        matched_lora = [k for k in new_ckpt_dict.keys() if "lora" in k and k in model_keys]
-        logger.info(f"Successfully matched {len(matched_lora)} LoRA keys!")
+        # 6. 核心审计逻辑：不要猜，看数据
+        rank = int(os.environ.get("RANK", 0))
+        if rank == 0:
+            # 分类统计：LoRA, Projector, Encoder
+            matched_lora = [k for k in new_ckpt_dict.keys() if "lora" in k and k in model_keys]
+            matched_proj = [k for k in new_ckpt_dict.keys() if "encoder_projector" in k and k in model_keys]
+            
+            logger.info("="*50)
+            logger.info(f"CHECKPOINT LOADING REPORT (Total keys in file: {len(ckpt_keys)})")
+            logger.info(f"--> Successfully matched LoRA keys: {len(matched_lora)}")
+            logger.info(f"--> Successfully matched Projector keys: {len(matched_proj)}")
+            
+            # 报告 Missing Keys (模型中有但文件中没有加载上的)
+            # 我们重点关注 Projector，因为它是音频能否工作的关键
+            missing_proj = [k for k in load_result.missing_keys if "encoder_projector" in k]
+            if missing_proj:
+                logger.error(f"!!! CRITICAL MISSING PROJECTOR KEYS: {missing_proj}")
+                logger.info(f"Example key from model: {list(model_keys)[0] if model_keys else 'None'}")
+                logger.info(f"Example key from ckpt: {ckpt_keys[0] if ckpt_keys else 'None'}")
+            
+            # 如果 398 个键没全对上，发出警报
+            total_matched = len(matched_lora) + len(matched_proj)
+            if total_matched < 398:
+                logger.warning(f"!!! LOAD INCOMPLETE: Only {total_matched}/398 relevant keys were loaded.")
+            else:
+                logger.info("--> SUCCESS: All 398 relevant keys (LoRA + Projector) loaded.")
+            logger.info("="*50)
 
+    # 打印模型整体大小
     print_model_size(
         model,
         train_config,
-        (
-            int(os.environ["RANK"])
-            if train_config.enable_fsdp or train_config.enable_ddp
-            else 0
-        ),
+        int(os.environ.get("RANK", 0))
     )
     return model, tokenizer
 
@@ -457,7 +471,7 @@ class slam_model_asr(torch.nn.Module):
                 ):
         # input features: [bs, audio_lengths，560] , input_length: [bs]
         
-        if getattr(self.train_config, "text_only_sft", False) and self.training:
+        if getattr(self.train_config, "text_only_sft", False):
             inputs_embeds = self.llm.get_input_embeddings()(input_ids)
             model_outputs = self.llm(
                 inputs_embeds=inputs_embeds, 
@@ -485,7 +499,6 @@ class slam_model_asr(torch.nn.Module):
             encoder_out = None
             encoder_out_lens = None
         else:
-            # === 原有的音频编码逻辑 (保持不变) ===
             speech = input_features
             B = speech.size(0)
 
@@ -530,13 +543,12 @@ class slam_model_asr(torch.nn.Module):
                     encoder_feature_length = encoder_feature_length.to(device, non_blocking=True)
                 
                 elif use_sim_mode: 
-                    # 直接使用模拟 PSD_CTC
+                    # 使用模拟 PSD_CTC
                     encoder_outs = sim_ctc
                     encoder_feature_length = sim_ctc_len
-                    # 注意：sim_ctc 已经是 [B, T, 25055] 的概率分布，且已经是 PSD 处理过的，无需再处理
                 
                 else:
-                    # [原有逻辑] 使用真实音频 PSD
+                    # 使用真实音频 PSD：现在几乎不会进入此分支，真实音频直接走实时提取
                     if self.do_psd:
                         encoder_outs, encoder_feature_length = self.psd(ctc_posterior, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
                     else:
@@ -597,6 +609,7 @@ class slam_model_asr(torch.nn.Module):
             if self.do_psd:
                 encoder_outs, encoder_feature_length = self.psd(encoder_out, encoder_out_lens, ctc_posterior,self.encoder.blank_id)
             else:
+                print("Do not use psd ...")
                 encoder_outs, encoder_feature_length = encoder_out, encoder_out_lens
 
             projector_outs = self.encoder_projector(encoder_outs) 

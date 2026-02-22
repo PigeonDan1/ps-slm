@@ -64,9 +64,10 @@ class MultiTaskDataset(IterableDataset):
         self.inference_mode = dataset_config.get("inference_mode", False)
 
         # 为验证和测试加载 SenseVoice 前端参数
-        if self.inference_mode or self.split in ["test"]:
+        if self.inference_mode or self.split in ["test"] or self.use_real_ctc:
             self.encoder_path = dataset_config.encoder_path
             from model.SenseVoice import SenseVoiceSmall
+            # 这里加载 SenseVoice 的配置，主要是为了拿它的音频特征提取器（frontend）
             _, kwargs = SenseVoiceSmall.from_pretrained(self.encoder_path)
             self.kwargs = kwargs
 
@@ -108,35 +109,30 @@ class MultiTaskDataset(IterableDataset):
                 sim_ctc, sim_ctc_len = None, None
 
                 # 训练: 纯文本微调LLM或者PSD（已处理音频）训练speechLLM
-                if self.split in ["train", "val"]:
+                if self.split in ["train", "val"] and not self.use_real_ctc:
                     if self.text_only_sft:
-                        # 纯文本模式构造dummy
                         input_features = torch.zeros(1, 560)
                         input_feature_length = torch.tensor(1, dtype=torch.long)
                     else:
-                        # 原始/仿真音频PSD模式
-                        path_key = "psd_path" if self.use_real_ctc else "sim_psd_path"
+                        path_key = "sim_psd_path" # 仿真模式强制找仿真路径
                         pt_path = item.get(path_key)
-
                         if pt_path and os.path.exists(pt_path):
                             data = torch.load(pt_path, map_location='cpu', weights_only=False)
-                            # 2. 内部逻辑已包含：从 25056 切除至 25055 (indices 中的 25055 被丢弃)
                             sim_ctc = restore_dense_matrix(data['psd_indices'], data['psd_values'])
                             sim_ctc_len = torch.tensor(sim_ctc.size(0), dtype=torch.long)
                             input_features = torch.zeros(sim_ctc.size(0), 560) 
                             input_feature_length = sim_ctc_len
-                        else: 
+                        else:
                             continue
-
-                # 测试 (走真实音频提取逻辑)
                 else:
+                    # 真实音频模式（训练/验证且use_real_ctc=true）或测试模式：读取原始音频
                     ark_path = item["path"]
                     try:
                         import torchaudio
                         from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
                         frontend = self.kwargs.get("frontend", None)
                         
-                        if task in ["QA", "EN2DE"] or ark_path.endswith(".wav"):
+                        if task in ["QA", "EN2DE"] or ark_path.endswith(".wav") or ark_path.endswith(".flac"):
                             waveform, _ = torchaudio.load(ark_path)
                             audio_raw = waveform.mean(dim=0) if waveform.shape[0] > 1 else waveform.squeeze(0)
                         else:
@@ -145,12 +141,13 @@ class MultiTaskDataset(IterableDataset):
                         audio_list = load_audio_text_image_video([audio_raw], fs=frontend.fs, audio_fs=16000, data_type="sound")
                         fbank, fbank_len = extract_fbank(audio_list, data_type="sound", frontend=frontend)
                         input_features, input_feature_length = fbank[0], fbank_len[0]
+                        sim_ctc, sim_ctc_len = None, None # 真实音频模式下不提供 pre-computed ctc
                     except Exception as e:
                         print(f"[SKIP] key={key} err={e}")
                         continue
 
                 # Prompt首先看用不用medical_SFT。再根据task来
-                prompt_key = "medical_SFT" if (self.text_only_sft) else task
+                prompt_key = "text_SFT" if (self.text_only_sft) else task # text_SFT的prompt为空
                 prompt = random.choice(self.multitask_prompt_list[prompt_key])
                 if task == "QA": 
                     prompt += f"\n\nTask: {item['task']}\n{item['prompt']}"

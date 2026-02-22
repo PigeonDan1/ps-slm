@@ -6,15 +6,15 @@ code_dir=.
 projector=linear-silu #simple_linear
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt # need to load pretrained ctc head if ctc head is frozen
 
-use_peft=false
+use_peft=true
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=1500
-ckpt_path=/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/company/exp1_simulator/company_exp1_sim_phase1
+ckpt_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/new/medical_sim_audio_lora_simctc-20260222-1552/ps-slm_epoch_7_step_4"
 
 task=asr
-split=test-other
-dataset=medical
+split=test-clean
+dataset=librispeech
 
 # TBD: u should change paths to your own paths
 if [ "$task" = "asr" ]; then

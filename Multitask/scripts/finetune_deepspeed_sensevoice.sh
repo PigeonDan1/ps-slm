@@ -30,7 +30,7 @@ if [ "$dataset" = "asr" ] || [ "$dataset" = "multitask_large" ]; then
     # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/dev"
     # data_tag="medical"
     # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical/train/simulator_B1"    
-    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/dev"
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical/dev/simulator_B1"
     # data_tag="medical_sim"
 else
     train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
@@ -44,8 +44,8 @@ multitask_prompt_path=conf/multiprompt.jsonl
 projector=linear-silu # simple linear for ctc head, linear is normal type, cross-attention 
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
-# ckpt_path=/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/company/exp2_simulator/company_exp2_sim_phase1/pytorch_model.bin
-use_peft=false # For llm
+ckpt_path=""
+use_peft=true # For llm
 use_emb=false # For llm input_embs
 gt_emb=true # whether use gt's emb as input
 gt_emb_noise=false # whether use noise
@@ -54,19 +54,19 @@ top1_emb=false # whether use top1's emb as input
 use_fp16=true
 freeze_encoder=true
 freeze_projector=false
-do_psd=true # whether use psd to ds
-ctc_posterior=true # whether use ctc posterior
+do_psd=false # whether use psd to ds
+ctc_posterior=false # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 use_real_ctc=true # whether use simulated ctc
 text_only_sft=false # whether only peft LLM
-skip_encoder=true # whether use pepared ctc data
+skip_encoder=false # whether use pepared ctc data
 # use absolute path
 deepspeed_config=conf/ds_config.json
 
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall
-encoder_dim=25055 #25055 #512
+encoder_dim=512 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
 
 # Choose LLM
@@ -80,8 +80,9 @@ prompt_fig=instruction_first
 
 peft_tag=$([ "$use_peft" = "true" ] && echo "lora" || echo "nolora")
 ctc_tag=$([ "$use_real_ctc" = "true" ] && echo "realctc" || echo "simctc")
+text_tag=$([ "$text_only_sft" = "true" ] && echo "text" || echo "audio")
 
-output_dir=${code_dir}/exp/${data_tag}_${peft_tag}_${ctc_tag}-$(date +"%Y%m%d-%H%M")
+output_dir=${code_dir}/exp/new/${data_tag}_${text_tag}_${peft_tag}_${ctc_tag}-$(date +"%Y%m%d-%H%M")
 
 # 注意要不要添加ckpt_path
 hydra_args="
@@ -123,6 +124,9 @@ hydra.run.dir=$output_dir \
 ++train_config.num_workers_dataloader=4 \
 ++train_config.output_dir=$output_dir \
 ++train_config.skip_encoder=$skip_encoder \
+++train_config.lr=5e-5 \
+++train_config.total_steps=15000 \
+++train_config.warmup_steps=200 \
 ++metric=acc \
 "
 
