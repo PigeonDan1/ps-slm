@@ -1,0 +1,7 @@
+{"task": "ASR_zh", "prompt": "语音转文本"}
+{"task": "ASR_en", "prompt": "Transcribe the speech to text."}
+{"task": "EN2ZH", "prompt": "translate the engLish speech into mandarin"}
+{"task": "ZH2EN", "prompt": "translate the mandarin speech into english"}
+{"task": "GR", "prompt": "Describe the gender of the speaker in one word: male or female?"}
+{"task": "SER", "prompt": "Describe the emotion of the speaker in one word: Happy, Sad, Angry or Neutral?"}
+{"task": "SLU_scenario", "prompt": "Please select the most appropriate option from the following 18 scenarios based on the audio content. Only return the name of the scenario: email, pLay, calendar, general, iot, audio, takeaway, news, 9a, weather, datetime, alarm, cooking, recommendation,transport,social,music, lists"}

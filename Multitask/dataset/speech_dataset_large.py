@@ -108,22 +108,22 @@ class MultiTaskDataset(IterableDataset):
                 input_features, input_feature_length = None, None
                 sim_ctc, sim_ctc_len = None, None
 
-                # 训练: 纯文本微调LLM或者PSD（已处理音频）训练speechLLM
                 if self.split in ["train", "val"] and not self.use_real_ctc:
                     if self.text_only_sft:
                         input_features = torch.zeros(1, 560)
                         input_feature_length = torch.tensor(1, dtype=torch.long)
                     else:
-                        path_key = "sim_psd_path" # 仿真模式强制找仿真路径
+                        path_key = "sim_psd_path" # 非use_real_ctc非文本微调时优先使用sim_psd_path
                         pt_path = item.get(path_key)
-                        if pt_path and os.path.exists(pt_path):
-                            data = torch.load(pt_path, map_location='cpu', weights_only=False)
-                            sim_ctc = restore_dense_matrix(data['psd_indices'], data['psd_values'])
-                            sim_ctc_len = torch.tensor(sim_ctc.size(0), dtype=torch.long)
-                            input_features = torch.zeros(sim_ctc.size(0), 560) 
-                            input_feature_length = sim_ctc_len
-                        else:
-                            continue
+                        if not pt_path or not os.path.exists(pt_path):
+                            path_key = "psd_path"
+                            pt_path = item.get(path_key)
+                        data = torch.load(pt_path, map_location='cpu', weights_only=False)
+                        sim_ctc = restore_dense_matrix(data['psd_indices'], data['psd_values'])
+                        sim_ctc_len = torch.tensor(sim_ctc.size(0), dtype=torch.long)
+                        input_features = torch.zeros(sim_ctc.size(0), 560) 
+                        input_feature_length = sim_ctc_len
+
                 else:
                     # 真实音频模式（训练/验证且use_real_ctc=true）或测试模式：读取原始音频
                     ark_path = item["path"]
@@ -159,9 +159,11 @@ class MultiTaskDataset(IterableDataset):
                 prompt_ids_tensor = torch.tensor(prompt_ids)
 
                 target_text = item["target"]
+                gt = item.get("GT") or target_text
+
                 if not self.inference_mode:
-                    if task == "ASR": 
-                        target_text = re.sub(r"[^A-Za-z\s.,!?']+", "", target_text).lower().strip()
+                    # if task == "ASR": 
+                        # target_text = re.sub(r"[^A-Za-z\s.,!?']+", "", target_text).lower().strip()
                     target_ids = self.tokenizer.encode(target_text) + [self.tokenizer.eos_token_id]
                     input_ids = torch.cat([prompt_ids_tensor, torch.tensor(target_ids)])
                 else:
@@ -176,7 +178,7 @@ class MultiTaskDataset(IterableDataset):
                     "sim_ctc_len": sim_ctc_len,
                     "key": key,
                     "target": target_text,
-                    "GT": item.get("GT", "").encode('utf-8').decode('unicode_escape'),
+                    "GT": gt.encode('utf-8').decode('unicode_escape'),
                 }
                 if not self.inference_mode:
                     labels = input_ids.clone()

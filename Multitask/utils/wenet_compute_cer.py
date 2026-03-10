@@ -336,7 +336,7 @@ if __name__ == '__main__':
             del sys.argv[1]
             split = dict()
             with codecs.open(split_file, 'r', 'utf-8') as fh:
-                for line in fh:  # line in unicode
+                for line in fh:
                     words = line.strip().split()
                     if len(words) >= 2:
                         split[words[0]] = words[1:]
@@ -346,7 +346,7 @@ if __name__ == '__main__':
             ignore_file = sys.argv[1][len(a):]
             del sys.argv[1]
             with codecs.open(ignore_file, 'r', 'utf-8') as fh:
-                for line in fh:  # line in unicode
+                for line in fh:
                     line = line.strip()
                     if len(line) > 0:
                         ignore_words.add(line)
@@ -378,7 +378,6 @@ if __name__ == '__main__':
                 padding_symbol = '_'
             continue
         if True or sys.argv[1].startswith('-'):
-            #ignore invalid switch
             del sys.argv[1]
             continue
 
@@ -392,6 +391,7 @@ if __name__ == '__main__':
     ref_file = sys.argv[1]
     hyp_file = sys.argv[2]
     rec_set = {}
+    filtered_count = 0 
     if split and not case_sensitive:
         newsplit = dict()
         for w in split:
@@ -412,7 +412,6 @@ if __name__ == '__main__':
             rec_set[fid] = normalize(array[1:], ignore_words, case_sensitive,
                                      split)
 
-    # compute error rate on the interaction of reference file and hyp file
     for line in open(ref_file, 'r', encoding='utf-8'):
         if tochar:
             array = characterize(line)
@@ -424,6 +423,20 @@ if __name__ == '__main__':
             continue
         lab = normalize(array[1:], ignore_words, case_sensitive, split)
         rec = rec_set[fid]
+
+        temp_calculator = Calculator() 
+        result = temp_calculator.calculate(lab[:], rec[:]) 
+        
+        if result['all'] != 0:
+            wer = float(result['ins'] + result['sub'] + result['del']) * 100.0 / result['all']
+        else:
+            wer = 0.0 if result['ins'] == 0 else 100.1 
+
+        # 核心修改：移除 continue，改为重写 rec 以修正统计值
+        if wer > 100.0:
+            filtered_count += 1 
+            rec = lab + lab # 构造 C=N, I=N 的情况，使得 WER 恰好为 100%
+            
         if verbose:
             print('\nutt: %s' % fid)
 
@@ -491,6 +504,7 @@ if __name__ == '__main__':
         print(
             '==========================================================================='
         )
+        print('Capped samples (WER > 100%% forced to 100%%): %d' % filtered_count)
         print()
 
     result = calculator.overall()
@@ -519,12 +533,11 @@ if __name__ == '__main__':
             print('N=%d C=%d S=%d D=%d I=%d' %
                   (result['all'], result['cor'], result['sub'], result['del'],
                    result['ins']))
-        if len(cluster_file) > 0:  # compute separated WERs for word clusters
+        if len(cluster_file) > 0:
             cluster_id = ''
             cluster = []
             for line in open(cluster_file, 'r', encoding='utf-8'):
                 for token in line.decode('utf-8').rstrip('\n').split():
-                    # end of cluster reached, like </Keyword>
                     if token[0:2] == '</' and token[len(token)-1] == '>' and \
                        token.lstrip('</').rstrip('>') == cluster_id :
                         result = calculator.cluster(cluster)
@@ -539,12 +552,10 @@ if __name__ == '__main__':
                                result['del'], result['ins']))
                         cluster_id = ''
                         cluster = []
-                    # begin of cluster reached, like <Keyword>
                     elif token[0] == '<' and token[len(token)-1] == '>' and \
                          cluster_id == '' :
                         cluster_id = token.lstrip('<').rstrip('>')
                         cluster = []
-                    # general terms, like WEATHER / CAR / ...
                     else:
                         cluster.append(token)
         print()

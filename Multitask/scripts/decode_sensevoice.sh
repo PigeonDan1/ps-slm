@@ -6,11 +6,11 @@ code_dir=.
 projector=linear-silu #simple_linear
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt # need to load pretrained ctc head if ctc head is frozen
 
-use_peft=true
+use_peft=false
 use_fp16=false
 gt_emb=false # whether use gt's emb as input, actually here refers to gt one-hot
 eval_max_frame_length=1500
-ckpt_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/new/medical_sim_audio_lora_simctc-20260222-1552/ps-slm_epoch_7_step_4"
+ckpt_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/new/half_audio_multitask_large_audio_nolora_realctc-20260305-0948/ps-slm_epoch_1_step_1000"
 
 task=asr
 split=test-clean

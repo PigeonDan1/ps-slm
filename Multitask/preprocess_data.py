@@ -23,11 +23,11 @@ from model.tokenizer import SenseVoiceTokenizer
 from funasr.utils.load_utils import load_audio_text_image_video, extract_fbank
 
 # ================= 配置 =================
-BASE_WORK_DIR = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask"
-OUTPUT_DATA_DIR = os.path.join(BASE_WORK_DIR, "data")
+BASE_WORK_DIR = "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data"
+OUTPUT_DATA_DIR = os.path.join(BASE_WORK_DIR, "medical_tts")
 SOURCE_FILES = {
-    "train": "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/train/multitask.jsonl",
-    "dev": "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/medical/dev/multitask.jsonl"
+    "train": "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical_tts/train/multitask.jsonl",
+    "dev": "/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical_tts/dev/multitask.jsonl"
 }
 MODEL_PATH = "/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall"
 BLANK_THRESHOLD = 0.90

@@ -89,6 +89,7 @@ def setup_llm(train_config, model_config, **kwargs):
                 load_in_8bit=True if train_config.quantization else None,
                 device_map="auto" if train_config.quantization else None,
                 use_cache=use_cache,
+                low_cpu_mem_usage=True,
             )
 
     print_module_size(model, model_config.llm_name, int(os.environ["RANK"]) if train_config.enable_fsdp or train_config.enable_ddp else 0)
@@ -757,6 +758,7 @@ class slam_model_asr(torch.nn.Module):
             min_length=kwargs.get("min_length", 1),
             top_p=kwargs.get("top_p", 1.0),
             repetition_penalty=kwargs.get("repetition_penalty", 1.0),
+            # no_repeat_ngram_size=kwargs.get("no_repeat_ngram_size", 3),
             length_penalty=kwargs.get("length_penalty", 1.0),
             temperature=kwargs.get("temperature", 1.0),
             attention_mask=attention_mask,

@@ -19,9 +19,9 @@ code_dir=.
 dataset=asr
 task=asr
 if [ "$dataset" = "asr" ] || [ "$dataset" = "multitask_large" ]; then
-    train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/train"    
-    dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
-    data_tag="libri"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/train"    
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
+    # data_tag="libri"
     # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/librispeech/train/simulator_B1_origin10k"
     # train_scp_extra_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/librispeech/train/simulator_B2_origin10k"    
     # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
@@ -32,20 +32,41 @@ if [ "$dataset" = "asr" ] || [ "$dataset" = "multitask_large" ]; then
     # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical/train/simulator_B1"    
     # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical/dev/simulator_B1"
     # data_tag="medical_sim"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical_tts/train"
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/medical_tts/dev"
+    # data_tag="medical_tts"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/multitask_large/train/simulator_B1"
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/multitask_large/dev"
+    # data_tag="sim_multitask_large_devEval"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/half_reprobenchmark/train"
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/half_reprobenchmark/dev"
+    # data_tag="sure_multitask_half"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/multitask_large/train"
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/yangyi/data/multitask_large/dev"
+    # data_tag="audio_multitask_large"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/half_multitask_large/train"
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/half_multitask_large/dev"
+    # data_tag="half_audio_multitask_large"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/WER_exact_sim3"    
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
+    # data_tag="wer_exact3"
+    # train_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/data/slidespeech_werexact3/slide_libri_metadata"    
+    # dev_scp_file_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/ps-slm/Multitask/data/dev"
+    # data_tag="libri_slide_simB1"
 else
     train_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/train/
     dev_scp_file_path=/aistor/aispeech/hpc_stor01/home/fangyangui/workingspace/data/${dataset}/${task}/dev/
 fi
 
-train_max_frame_length=1000 # you can change this accroding to your process memory
+train_max_frame_length=1500 # you can change this accroding to your process memory
 eval_max_frame_length=1000
 multitask_prompt_path=conf/multiprompt.jsonl
 
 projector=linear-silu # simple linear for ctc head, linear is normal type, cross-attention 
 # ctc_linear=/aistor/aispeech/hpc_stor01/home/pengjing00sx/Github/ps-slm/ps-ctc/exp_sensevoice_librispeech_qwen_frozen/epoch_5.pt
 
-ckpt_path=""
-use_peft=true # For llm
+ckpt_path="/aistor/sjtu/hpc_stor01/home/wangchenghao/workingspace/TASU-simulator/Multitask/exp/new/sim_multitask_large_audio_nolora_simctc-20260303-1025/ps-slm_epoch_5_step_7000/pytorch_model.bin"
+use_peft=false # For llm
 use_emb=false # For llm input_embs
 gt_emb=true # whether use gt's emb as input
 gt_emb_noise=false # whether use noise
@@ -54,8 +75,8 @@ top1_emb=false # whether use top1's emb as input
 use_fp16=true
 freeze_encoder=true
 freeze_projector=false
-do_psd=false # whether use psd to ds
-ctc_posterior=false # whether use ctc posterior
+do_psd=true # whether use psd to ds
+ctc_posterior=true # whether use ctc posterior
 voca_trans=false # whether use vocabulary transfer
 use_real_ctc=true # whether use simulated ctc
 text_only_sft=false # whether only peft LLM
@@ -66,7 +87,7 @@ deepspeed_config=conf/ds_config.json
 # Choose Encoder
 encoder_name=sensevoice
 speech_encoder_path=/aistor/sjtu/hpc_stor01/home/yangyi/model/SenseVoiceSmall
-encoder_dim=512 #25055 #512
+encoder_dim=25055 #25055 #512
 encoder_projector_ds_rate=1 # downsampling rate
 
 # Choose LLM
@@ -87,6 +108,7 @@ output_dir=${code_dir}/exp/new/${data_tag}_${text_tag}_${peft_tag}_${ctc_tag}-$(
 # 注意要不要添加ckpt_path
 hydra_args="
 hydra.run.dir=$output_dir \
+++ckpt_path=$ckpt_path \
 ++model_config.file=$model_factory \
 ++model_config.llm_path=$llm_path \
 ++model_config.llm_dim=$llm_dim \
@@ -107,7 +129,7 @@ hydra.run.dir=$output_dir \
 ++dataset_config.use_real_ctc=$use_real_ctc \
 ++dataset_config.text_only_sft=$text_only_sft \
 ++train_config.model_name=ps-slm \
-++train_config.num_epochs=5 \
+++train_config.num_epochs=1 \
 ++train_config.freeze_encoder=$freeze_encoder \
 ++train_config.freeze_projector=$freeze_projector \
 ++train_config.do_psd=$do_psd \
@@ -124,9 +146,9 @@ hydra.run.dir=$output_dir \
 ++train_config.num_workers_dataloader=4 \
 ++train_config.output_dir=$output_dir \
 ++train_config.skip_encoder=$skip_encoder \
-++train_config.lr=5e-5 \
-++train_config.total_steps=15000 \
-++train_config.warmup_steps=200 \
+++train_config.lr=5e-6 \
+++train_config.total_steps=18800 \
+++train_config.warmup_steps=250 \
 ++metric=acc \
 "
 
